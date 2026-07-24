@@ -9,3 +9,6 @@ yarn-error.log*
 database/*.db
 dist/
 coverage/
+*Copy*
+*- Copy*
+* - Copy*
