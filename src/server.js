@@ -27,17 +27,40 @@ const morgan = require('morgan');
 // Middleware
 app.use(helmet());
 app.use(morgan('dev'));
-app.use(cors());
+// Strict production CORS origin whitelist
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ['http://localhost:8081', 'https://bava-smart-mess.vercel.app'];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS policy: Access denied for this origin.'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Bypass-Tunnel-Reminder', 'x-bypass-windows'],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve a basic welcome message on root path
+// Required Health Routes
 app.get('/', (req, res) => {
   res.status(200).json({
-    message: 'Welcome to the SRI Shakthi Smart Mess API Server',
     status: 'online',
-    version: '1.0.0',
-    documentation: 'See API spec sheet'
+    message: 'Welcome to SMART MESS API',
+    version: '1.0.0'
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy'
   });
 });
 

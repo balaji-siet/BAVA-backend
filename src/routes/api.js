@@ -15,6 +15,15 @@ const feedbackController = require('../controllers/feedbackController');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const rateLimiter = require('../middleware/rateLimiter');
 
+// --- API HEALTH CHECK ROUTES ---
+router.get('/', (req, res) => {
+  res.status(200).json({ status: 'API Running' });
+});
+
+router.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
 // Express validation error handler middleware
 const validate = (req, res, next) => {
   const errors = validationResult(req);

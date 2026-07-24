@@ -6,8 +6,15 @@ let pool;
 let isSQLite = false;
 let sqliteDb = null;
 
-// Determine if we should use MySQL or fallback to SQLite
-const useMySQL = process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME;
+const isProduction = process.env.NODE_ENV === 'production';
+const hasMySQLConfig = process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME;
+
+if (isProduction && !hasMySQLConfig) {
+  console.error('FATAL PRODUCTION ERROR: Production mode requires MySQL database environment variables (DB_HOST, DB_USER, DB_NAME). Startup aborted.');
+  process.exit(1);
+}
+
+const useMySQL = hasMySQLConfig;
 
 if (useMySQL) {
   const mysql = require('mysql2/promise');

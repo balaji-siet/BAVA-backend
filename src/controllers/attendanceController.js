@@ -42,10 +42,20 @@ const getStudentAttendance = async (req, res) => {
   const studentId = req.userId;
 
   try {
-    const [rows] = await db.query(
-      'SELECT attendance_date, meal_type, attendance_status, created_at FROM attendance WHERE student_id = ? ORDER BY attendance_date DESC',
-      [studentId]
-    );
+    let rows;
+    try {
+      const [result] = await db.query(
+        'SELECT attendance_date, meal_type, status AS attendance_status, created_at FROM attendance WHERE student_id = ? ORDER BY attendance_date DESC',
+        [studentId]
+      );
+      rows = result;
+    } catch (e) {
+      const [result] = await db.query(
+        'SELECT attendance_date, meal_type, attendance_status, created_at FROM attendance WHERE student_id = ? ORDER BY attendance_date DESC',
+        [studentId]
+      );
+      rows = result;
+    }
     res.status(200).json(rows);
   } catch (error) {
     console.error('Get student attendance error:', error);

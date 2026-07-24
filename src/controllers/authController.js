@@ -129,7 +129,6 @@ const studentLogin = async (req, res) => {
   }
 
   try {
-    // First check supervisors table (so admin can log in via /api/login too)
     const [supervisors] = await db.query(
       'SELECT * FROM supervisors WHERE employee_id = ? OR email = ? LIMIT 1',
       [identifier, identifier]
@@ -175,25 +174,28 @@ const studentLogin = async (req, res) => {
 
     const student = students[0];
 
-    // Verify password (supporting bcrypt hashing and plain text fallback)
-    let isMatch = (password === student.password_hash);
-    if (!isMatch) {
-      try {
-        isMatch = await bcrypt.compare(password, student.password_hash);
-      } catch (e) {
-        isMatch = false;
-      }
+    // Verify password strictly via bcrypt
+    let isMatch = false;
+    try {
+      isMatch = await bcrypt.compare(password, student.password_hash);
+    } catch (e) {
+      isMatch = false;
+    }
+
+    if (!isMatch && process.env.NODE_ENV !== 'production') {
+      // Fallback for unhashed legacy seed data in non-production only
+      isMatch = (password === student.password_hash);
     }
 
     if (!isMatch) {
       return res.status(400).json({ error: 'Invalid password' });
     }
 
-    // Generate JWT token (extended to 365 days)
+    // Generate JWT token (7-day production validity)
     const token = jwt.sign(
       { studentId: student.id, rollNumber: student.roll_number, role: 'student', name: student.name },
       JWT_SECRET,
-      { expiresIn: '365d' }
+      { expiresIn: '7d' }
     );
 
     console.log("Login Successful");
