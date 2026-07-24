@@ -24,6 +24,23 @@ router.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy' });
 });
 
+router.get('/database/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    return res.status(200).json({
+      database: 'connected',
+      status: 'healthy'
+    });
+  } catch (err) {
+    console.error('Database Health Error:', err.message);
+    return res.status(500).json({
+      database: 'unreachable',
+      status: 'error',
+      message: err.message
+    });
+  }
+});
+
 // Express validation error handler middleware
 const validate = (req, res, next) => {
   const errors = validationResult(req);
