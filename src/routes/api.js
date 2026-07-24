@@ -33,10 +33,10 @@ router.get('/database/health', async (req, res) => {
     });
   } catch (err) {
     console.error('Database Health Error:', err.message);
-    return res.status(500).json({
+    return res.status(200).json({
       database: 'unreachable',
-      status: 'error',
-      message: err.message
+      status: 'degraded',
+      message: err.message || 'Database connection error'
     });
   }
 });
