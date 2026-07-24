@@ -1,8 +1,13 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
-require('dotenv').config();
+
+const connectMongoDB = require('./config/mongodb');
+
+connectMongoDB();
 
 const apiRouter = require('./routes/api');
 const notificationService = require('./services/notificationService');
