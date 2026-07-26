@@ -5,9 +5,7 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 
-const connectMongoDB = require('./config/mongodb');
-
-connectMongoDB();
+const { connectMongoDB, getMongoError } = require('./config/mongodb');
 
 const apiRouter = require('./routes/api');
 const notificationService = require('./services/notificationService');
@@ -21,7 +19,6 @@ const io = new Server(server, {
   }
 });
 
-// Attach socket.io to the app context so it can be accessed in controllers
 app.set('io', io);
 
 const PORT = process.env.PORT || 5000;
@@ -29,10 +26,9 @@ const PORT = process.env.PORT || 5000;
 const helmet = require('helmet');
 const morgan = require('morgan');
 
-// Middleware
 app.use(helmet());
 app.use(morgan('dev'));
-// Strict production CORS origin whitelist
+
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',') 
   : ['http://localhost:8081', 'https://bava-smart-mess.vercel.app'];
@@ -54,21 +50,47 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Required Health Routes
+const mongoose = require('mongoose');
+
+// Required Root Health Routes
 app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'healthy',
-    server: 'SMART MESS Backend',
-    database: 'connected'
-  });
+  const isConnected = mongoose.connection.readyState === 1;
+  const errorReason = getMongoError();
+
+  if (isConnected) {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'connected'
+    });
+  } else {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'disconnected',
+      reason: errorReason || 'MongoDB Atlas connection in progress or unreachable'
+    });
+  }
 });
 
 app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'healthy',
-    server: 'SMART MESS Backend',
-    database: 'connected'
-  });
+  const isConnected = mongoose.connection.readyState === 1;
+  const errorReason = getMongoError();
+
+  if (isConnected) {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'connected'
+    });
+  } else {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'disconnected',
+      reason: errorReason || 'MongoDB Atlas connection in progress or unreachable'
+    });
+  }
 });
 
 // API Routes
@@ -80,10 +102,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Initialize Scheduled Notifications (Cutoffs)
 notificationService.initializeSchedules();
 
-// Socket.IO event handler
 io.on('connection', (socket) => {
   console.log(`WebSocket client connected: ${socket.id}`);
   socket.on('disconnect', () => {
@@ -91,14 +111,16 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start Server
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`============================================================`);
-  console.log(`SRI Shakthi Smart Mess server is running on port ${PORT}`);
-  console.log(`Bound to host: 0.0.0.0`);
-  console.log(`Env Mode: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`API base URL: http://0.0.0.0:${PORT}/api`);
-  console.log(`============================================================`);
-});
+// Connect to MongoDB and then start Server
+(async () => {
+  await connectMongoDB();
 
-
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`============================================================`);
+    console.log(`SRI Shakthi Smart Mess server is running on port ${PORT}`);
+    console.log(`Bound to host: 0.0.0.0`);
+    console.log(`Env Mode: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`API base URL: http://0.0.0.0:${PORT}/api`);
+    console.log(`============================================================`);
+  });
+})();

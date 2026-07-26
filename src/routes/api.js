@@ -3,6 +3,8 @@ const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 
+const { getMongoError } = require('../config/mongodb');
+
 const Student = require('../models/Student');
 const Supervisor = require('../models/Supervisor');
 const Reservation = require('../models/Reservation');
@@ -23,24 +25,48 @@ const rateLimiter = require('../middleware/rateLimiter');
 // --- API HEALTH CHECK ROUTES ---
 router.get('/', (req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
-  res.status(200).json({
-    status: 'healthy',
-    server: 'SMART MESS Backend',
-    database: isConnected ? 'connected' : 'disconnected'
-  });
+  const errorReason = getMongoError();
+
+  if (isConnected) {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'connected'
+    });
+  } else {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'disconnected',
+      reason: errorReason || 'MongoDB Atlas connection in progress or unreachable'
+    });
+  }
 });
 
 router.get('/health', (req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
-  res.status(200).json({
-    status: 'healthy',
-    server: 'SMART MESS Backend',
-    database: isConnected ? 'connected' : 'disconnected'
-  });
+  const errorReason = getMongoError();
+
+  if (isConnected) {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'connected'
+    });
+  } else {
+    res.status(200).json({
+      status: 'healthy',
+      server: 'SMART MESS Backend',
+      database: 'disconnected',
+      reason: errorReason || 'MongoDB Atlas connection in progress or unreachable'
+    });
+  }
 });
 
 router.get('/database/health', async (req, res) => {
   const state = mongoose.connection.readyState;
+  const errorReason = getMongoError();
+
   if (state === 1) {
     return res.status(200).json({
       database: 'connected',
@@ -51,7 +77,7 @@ router.get('/database/health', async (req, res) => {
     return res.status(200).json({
       database: 'unreachable',
       status: 'degraded',
-      message: 'MongoDB connection not active'
+      message: errorReason || 'MongoDB Atlas connection not active'
     });
   }
 });
@@ -139,6 +165,7 @@ router.get('/debug/time', reservationController.getDebugInfo);
 
 router.get('/diagnostics', async (req, res) => {
   const startTime = Date.now();
+  const errorReason = getMongoError();
   try {
     const studentsCount = await Student.countDocuments();
     const supervisorsCount = await Supervisor.countDocuments();
@@ -150,6 +177,7 @@ router.get('/diagnostics', async (req, res) => {
       status: 'online',
       databaseName: 'MongoDB Atlas',
       connectionStatus: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+      errorReason: errorReason || null,
       totalStudents: studentsCount,
       totalSupervisors: supervisorsCount,
       totalReservations: reservationsCount,
@@ -163,7 +191,7 @@ router.get('/diagnostics', async (req, res) => {
       status: 'online',
       databaseName: 'MongoDB Atlas',
       connectionStatus: 'Error',
-      error: err.message || 'Database connection error',
+      error: errorReason || err.message || 'Database connection error',
       timestamp: new Date().toISOString()
     });
   }
