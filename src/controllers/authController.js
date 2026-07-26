@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const db = require('../config/db');
+const Student = require('../models/Student');
+const Supervisor = require('../models/Supervisor');
 require('dotenv').config();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_mess_token_123!';
@@ -8,56 +9,42 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_mess_token_123!';
 // Register Student
 const studentRegister = async (req, res) => {
   console.log("Registration Request Received");
-  const { name, roll_number, department, hostel_block, mobile_number, email, password } = req.body;
+  const { name, roll_number, department, hostel_block, room_number, mobile_number, email, password } = req.body;
 
   if (!name || !roll_number || !department || !email || !password) {
     return res.status(400).json({ error: 'Required fields are missing.' });
   }
 
   try {
-    // Check if roll number already exists
-    const [existingRoll] = await db.query(
-      'SELECT id FROM students WHERE roll_number = ? LIMIT 1',
-      [roll_number]
-    );
-    if (existingRoll && existingRoll.length > 0) {
+    const existingRoll = await Student.findOne({ roll_number });
+    if (existingRoll) {
       return res.status(400).json({ error: 'Roll Number already exists' });
     }
 
-    // Check if email already exists
-    const [existingEmail] = await db.query(
-      'SELECT id FROM students WHERE email = ? LIMIT 1',
-      [email]
-    );
-    if (existingEmail && existingEmail.length > 0) {
+    const existingEmail = await Student.findOne({ email });
+    if (existingEmail) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Insert student with fallback for optional status column
-    try {
-      await db.query(
-        'INSERT INTO students (name, roll_number, department, hostel_block, mobile_number, email, password_hash, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [name, roll_number, department, hostel_block || null, mobile_number || null, email, passwordHash, 'active']
-      );
-    } catch (insertErr) {
-      if (insertErr.code === 'ER_BAD_FIELD_ERROR' || (insertErr.message && insertErr.message.includes('status'))) {
-        await db.query(
-          'INSERT INTO students (name, roll_number, department, hostel_block, mobile_number, email, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [name, roll_number, department, hostel_block || null, mobile_number || null, email, passwordHash]
-        );
-      } else {
-        throw insertErr;
-      }
-    }
+    const student = await Student.create({
+      name,
+      roll_number,
+      department,
+      hostel_block: hostel_block || 'A',
+      room_number: room_number || '101',
+      phone: mobile_number || '',
+      email,
+      password: passwordHash,
+      status: 'active'
+    });
 
-    res.status(201).json({ success: true, message: 'Student registered successfully' });
+    res.status(201).json({ success: true, message: 'Student registered successfully', studentId: student._id });
     console.log("Student Registered Successfully");
   } catch (error) {
-    console.error("SQL Error Details:", error);
+    console.error("Mongo Error Details:", error);
     res.status(500).json({ error: error.message || 'Database error during registration' });
   }
 };
@@ -67,59 +54,43 @@ const supervisorRegister = async (req, res) => {
   console.log("Registration Request Received");
   const { name, employee_id, department, mobile_number, email, password } = req.body;
 
-  if (!name || !employee_id || !email || !password) {
+  const supId = employee_id || req.body.supervisor_id;
+  if (!name || !supId || !email || !password) {
     return res.status(400).json({ error: 'Required fields are missing.' });
   }
 
   try {
-    // Check if employee ID already exists
-    const [existingId] = await db.query(
-      'SELECT id FROM supervisors WHERE employee_id = ? LIMIT 1',
-      [employee_id]
-    );
-    if (existingId && existingId.length > 0) {
+    const existingId = await Supervisor.findOne({ supervisor_id: supId });
+    if (existingId) {
       return res.status(400).json({ error: 'Employee ID already exists' });
     }
 
-    // Check if email already exists
-    const [existingEmail] = await db.query(
-      'SELECT id FROM supervisors WHERE email = ? LIMIT 1',
-      [email]
-    );
-    if (existingEmail && existingEmail.length > 0) {
+    const existingEmail = await Supervisor.findOne({ email });
+    if (existingEmail) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Insert supervisor with fallback for optional role column
-    try {
-      await db.query(
-        'INSERT INTO supervisors (name, employee_id, department, mobile_number, email, password_hash, role) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [name, employee_id, department || null, mobile_number || null, email, passwordHash, 'admin']
-      );
-    } catch (insertErr) {
-      if (insertErr.code === 'ER_BAD_FIELD_ERROR' || (insertErr.message && insertErr.message.includes('role'))) {
-        await db.query(
-          'INSERT INTO supervisors (name, employee_id, department, mobile_number, email, password_hash) VALUES (?, ?, ?, ?, ?, ?)',
-          [name, employee_id, department || null, mobile_number || null, email, passwordHash]
-        );
-      } else {
-        throw insertErr;
-      }
-    }
+    const supervisor = await Supervisor.create({
+      name,
+      supervisor_id: supId,
+      phone: mobile_number || '',
+      email,
+      password: passwordHash,
+      role: 'admin'
+    });
 
-    res.status(201).json({ success: true, message: 'Supervisor registered successfully' });
+    res.status(201).json({ success: true, message: 'Supervisor registered successfully', supervisorId: supervisor._id });
     console.log("Supervisor Registered Successfully");
   } catch (error) {
-    console.error("SQL Error Details:", error);
+    console.error("Mongo Error Details:", error);
     res.status(500).json({ error: 'Database connection failed' });
   }
 };
 
-// Student Login — accepts { email, password } OR { roll_number, password } for frontend compatibility
+// Student Login
 const studentLogin = async (req, res) => {
   const identifier = req.body.email || req.body.roll_number || req.body.username;
   const password = req.body.password;
@@ -129,31 +100,30 @@ const studentLogin = async (req, res) => {
   }
 
   try {
-    const [supervisors] = await db.query(
-      'SELECT * FROM supervisors WHERE employee_id = ? OR email = ? LIMIT 1',
-      [identifier, identifier]
-    );
+    // 1. First check supervisor collection
+    const supervisor = await Supervisor.findOne({
+      $or: [{ supervisor_id: identifier }, { email: identifier }]
+    });
 
-    if (supervisors && supervisors.length > 0) {
-      const supervisor = supervisors[0];
-      let isMatch = (password === supervisor.password_hash);
+    if (supervisor) {
+      let isMatch = (password === supervisor.password);
       if (!isMatch) {
-        try { isMatch = await bcrypt.compare(password, supervisor.password_hash); } catch (e) { isMatch = false; }
+        try { isMatch = await bcrypt.compare(password, supervisor.password); } catch (e) { isMatch = false; }
       }
 
       if (isMatch) {
         const token = jwt.sign(
-          { studentId: 0, rollNumber: supervisor.employee_id, role: 'admin', name: supervisor.name },
+          { studentId: supervisor._id, rollNumber: supervisor.supervisor_id, role: 'admin', name: supervisor.name },
           JWT_SECRET,
           { expiresIn: '365d' }
         );
-        console.log("Login Successful");
+        console.log("Login Successful (Supervisor)");
         return res.status(200).json({
           token,
           user: {
-            id: supervisor.id,
+            id: supervisor._id,
             name: supervisor.name,
-            roll_number: supervisor.employee_id,
+            roll_number: supervisor.supervisor_id,
             department: 'Administration',
             email: supervisor.email,
             role: 'admin'
@@ -162,48 +132,42 @@ const studentLogin = async (req, res) => {
       }
     }
 
-    // Then check students table
-    const [students] = await db.query(
-      'SELECT * FROM students WHERE email = ? OR roll_number = ? LIMIT 1',
-      [identifier, identifier]
-    );
+    // 2. Check student collection
+    const student = await Student.findOne({
+      $or: [{ email: identifier }, { roll_number: identifier }]
+    });
 
-    if (!students || students.length === 0) {
+    if (!student) {
       return res.status(400).json({ error: 'Invalid email or password' });
     }
 
-    const student = students[0];
-
-    // Verify password strictly via bcrypt
     let isMatch = false;
     try {
-      isMatch = await bcrypt.compare(password, student.password_hash);
+      isMatch = await bcrypt.compare(password, student.password);
     } catch (e) {
       isMatch = false;
     }
 
-    if (!isMatch && process.env.NODE_ENV !== 'production') {
-      // Fallback for unhashed legacy seed data in non-production only
-      isMatch = (password === student.password_hash);
+    if (!isMatch && password === student.password) {
+      isMatch = true;
     }
 
     if (!isMatch) {
       return res.status(400).json({ error: 'Invalid password' });
     }
 
-    // Generate JWT token (7-day production validity)
     const token = jwt.sign(
-      { studentId: student.id, rollNumber: student.roll_number, role: 'student', name: student.name },
+      { studentId: student._id, rollNumber: student.roll_number, role: 'student', name: student.name },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    console.log("Login Successful");
+    console.log("Login Successful (Student)");
 
     res.status(200).json({
       token,
       user: {
-        id: student.id,
+        id: student._id,
         name: student.name,
         roll_number: student.roll_number,
         department: student.department,
@@ -212,14 +176,14 @@ const studentLogin = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("SQL Error Details:", error);
+    console.error("Mongo Error Details:", error);
     res.status(500).json({ error: 'Database connection failed' });
   }
 };
 
 // Supervisor Login
 const supervisorLogin = async (req, res) => {
-  const username = req.body.username || req.body.roll_number || req.body.employee_id || req.body.email;
+  const username = req.body.username || req.body.roll_number || req.body.employee_id || req.body.email || req.body.supervisor_id;
   const password = req.body.password;
 
   if (!username || !password) {
@@ -227,22 +191,18 @@ const supervisorLogin = async (req, res) => {
   }
 
   try {
-    const [supervisors] = await db.query(
-      'SELECT * FROM supervisors WHERE employee_id = ? OR email = ? LIMIT 1',
-      [username, username]
-    );
+    const supervisor = await Supervisor.findOne({
+      $or: [{ supervisor_id: username }, { email: username }]
+    });
 
-    if (!supervisors || supervisors.length === 0) {
+    if (!supervisor) {
       return res.status(400).json({ error: 'Invalid username/email or password' });
     }
 
-    const supervisor = supervisors[0];
-
-    // Verify password
-    let isMatch = (password === supervisor.password_hash);
+    let isMatch = (password === supervisor.password);
     if (!isMatch) {
       try {
-        isMatch = await bcrypt.compare(password, supervisor.password_hash);
+        isMatch = await bcrypt.compare(password, supervisor.password);
       } catch (e) {
         isMatch = false;
       }
@@ -252,9 +212,8 @@ const supervisorLogin = async (req, res) => {
       return res.status(400).json({ error: 'Invalid password' });
     }
 
-    // Generate JWT token (extended to 365 days)
     const token = jwt.sign(
-      { studentId: 0, rollNumber: supervisor.employee_id, role: 'admin', name: supervisor.name },
+      { studentId: supervisor._id, rollNumber: supervisor.supervisor_id, role: 'admin', name: supervisor.name },
       JWT_SECRET,
       { expiresIn: '365d' }
     );
@@ -264,43 +223,40 @@ const supervisorLogin = async (req, res) => {
     res.status(200).json({
       token,
       user: {
-        id: supervisor.id,
+        id: supervisor._id,
         name: supervisor.name,
-        roll_number: supervisor.employee_id,
+        roll_number: supervisor.supervisor_id,
         department: 'Administration',
         email: supervisor.email,
         role: 'admin'
       }
     });
   } catch (error) {
-    console.error("SQL Error Details:", error);
+    console.error("Mongo Error Details:", error);
     res.status(500).json({ error: 'Database connection failed' });
   }
 };
 
 const getMe = async (req, res) => {
-  if (req.userId === 0) {
-    return res.status(200).json({
-      id: 0,
-      name: 'Mess Supervisor',
-      roll_number: 'admin',
-      department: 'Administration',
-      email: 'supervisor@shakthimess.edu',
-      role: 'admin'
-    });
-  }
-
   try {
-    const [students] = await db.query(
-      'SELECT id, name, roll_number, department, email FROM students WHERE id = ? LIMIT 1',
-      [req.userId]
-    );
-    if (!students || students.length === 0) {
+    const student = await Student.findById(req.userId);
+    if (!student) {
+      const supervisor = await Supervisor.findById(req.userId);
+      if (supervisor) {
+        return res.status(200).json({
+          id: supervisor._id,
+          name: supervisor.name,
+          roll_number: supervisor.supervisor_id,
+          department: 'Administration',
+          email: supervisor.email,
+          role: 'admin'
+        });
+      }
       return res.status(404).json({ error: 'User not found' });
     }
-    const student = students[0];
+
     res.status(200).json({
-      id: student.id,
+      id: student._id,
       name: student.name,
       roll_number: student.roll_number,
       department: student.department,

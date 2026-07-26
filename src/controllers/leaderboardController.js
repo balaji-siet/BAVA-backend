@@ -1,15 +1,22 @@
-const db = require('../config/db');
+const Student = require('../models/Student');
 
 // Get top students sorted by points
 const getLeaderboard = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT name, roll_number, department, hostel_block, points 
-       FROM Students 
-       ORDER BY points DESC 
-       LIMIT 10`
-    );
-    res.status(200).json(rows || []);
+    const students = await Student.find()
+      .select('name roll_number department hostel_block points')
+      .sort({ points: -1 })
+      .limit(10);
+
+    const formatted = students.map(s => ({
+      name: s.name,
+      roll_number: s.roll_number,
+      department: s.department,
+      hostel_block: s.hostel_block || 'A',
+      points: s.points || 0
+    }));
+
+    res.status(200).json(formatted);
   } catch (error) {
     console.error('Fetch leaderboard error:', error);
     res.status(500).json({ error: 'Database error fetching leaderboard' });
@@ -30,16 +37,17 @@ const awardPoints = async (req, res) => {
   }
 
   try {
-    const [result] = await db.query(
-      'UPDATE Students SET points = points + ? WHERE roll_number = ?',
-      [pointsVal, rollNumber]
+    const student = await Student.findOneAndUpdate(
+      { roll_number: rollNumber },
+      { $inc: { points: pointsVal } },
+      { new: true }
     );
 
-    if (result && result.affectedRows === 0) {
+    if (!student) {
       return res.status(404).json({ error: 'Student with given roll number not found' });
     }
 
-    res.status(200).json({ message: `Successfully adjusted student points by ${pointsVal}` });
+    res.status(200).json({ message: `Successfully adjusted student points by ${pointsVal}`, points: student.points });
   } catch (error) {
     console.error('Award points error:', error);
     res.status(500).json({ error: 'Database error adjusting points' });

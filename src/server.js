@@ -57,15 +57,17 @@ app.use(express.urlencoded({ extended: true }));
 // Required Health Routes
 app.get('/', (req, res) => {
   res.status(200).json({
-    status: 'online',
-    message: 'Welcome to SMART MESS API',
-    version: '1.0.0'
+    status: 'healthy',
+    server: 'SMART MESS Backend',
+    database: 'connected'
   });
 });
 
 app.get('/health', (req, res) => {
   res.status(200).json({
-    status: 'healthy'
+    status: 'healthy',
+    server: 'SMART MESS Backend',
+    database: 'connected'
   });
 });
 

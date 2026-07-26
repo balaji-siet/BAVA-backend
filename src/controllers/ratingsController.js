@@ -1,4 +1,5 @@
-const db = require('../config/db');
+const Feedback = require('../models/Feedback');
+const Student = require('../models/Student');
 
 // Submit or update a food rating for today
 const saveRating = async (req, res) => {
@@ -13,8 +14,7 @@ const saveRating = async (req, res) => {
     return res.status(400).json({ error: 'meal_type and rating are required' });
   }
 
-  const sanitizedComment = comment ? comment.replace(/<[^>]*>/g, '').trim() : null;
-
+  const sanitizedComment = comment ? comment.replace(/<[^>]*>/g, '').trim() : '';
   const validMeals = ['breakfast', 'lunch', 'dinner'];
   if (!validMeals.includes(meal_type)) {
     return res.status(400).json({ error: 'Invalid meal_type. Must be breakfast, lunch, or dinner' });
@@ -28,25 +28,31 @@ const saveRating = async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
   try {
-    // Check if rating already exists for this student, date, and meal
-    const [existing] = await db.query(
-      'SELECT id FROM FoodRatings WHERE student_id = ? AND date = ? AND meal_type = ? LIMIT 1',
-      [student_id, today, meal_type]
-    );
-
-    if (existing && existing.length > 0) {
-      await db.query(
-        'UPDATE FoodRatings SET rating = ?, comment = ? WHERE student_id = ? AND date = ? AND meal_type = ?',
-        [ratingVal, sanitizedComment, student_id, today, meal_type]
-      );
-    } else {
-      await db.query(
-        'INSERT INTO FoodRatings (student_id, date, meal_type, rating, comment) VALUES (?, ?, ?, ?, ?)',
-        [student_id, today, meal_type, ratingVal, sanitizedComment]
-      );
+    let student = null;
+    if (student_id) {
+      student = await Student.findById(student_id);
     }
 
-    res.status(200).json({ message: 'Rating saved successfully' });
+    const ratingDoc = await Feedback.findOneAndUpdate(
+      {
+        $or: [
+          { student_id: student ? student._id : student_id, date: today, meal_type },
+          { roll_number: student ? student.roll_number : 'UNKNOWN', date: today, meal_type }
+        ]
+      },
+      {
+        student_id: student ? student._id : student_id,
+        roll_number: student ? student.roll_number : 'UNKNOWN',
+        student_name: student ? student.name : 'Student',
+        meal_type,
+        rating: ratingVal,
+        comments: sanitizedComment,
+        date: today
+      },
+      { upsert: true, new: true }
+    );
+
+    res.status(200).json({ message: 'Rating saved successfully', rating: ratingDoc });
   } catch (error) {
     console.error('Save rating error:', error);
     res.status(500).json({ error: 'Database error saving food rating' });
@@ -59,49 +65,62 @@ const getTodayRatings = async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
   try {
-    const [rows] = await db.query(
-      'SELECT meal_type, rating, comment FROM FoodRatings WHERE student_id = ? AND date = ?',
-      [student_id, today]
-    );
-    res.status(200).json(rows || []);
+    let student = null;
+    if (student_id) {
+      student = await Student.findById(student_id);
+    }
+
+    const ratings = await Feedback.find({
+      $or: [
+        { student_id: student_id, date: today },
+        { roll_number: student ? student.roll_number : req.query.roll_number, date: today }
+      ]
+    });
+
+    const formatted = ratings.map(r => ({
+      meal_type: r.meal_type,
+      rating: r.rating,
+      comment: r.comments
+    }));
+
+    res.status(200).json(formatted);
   } catch (error) {
     console.error('Fetch today ratings error:', error);
-    res.status(500).json({ error: 'Database error fetching today\'s ratings' });
+    res.status(500).json({ error: "Database error fetching today's ratings" });
   }
 };
 
 // Get ratings analytics for supervisor
 const getRatingAnalytics = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT 
-        meal_type, 
-        ROUND(AVG(rating), 2) as average_rating, 
-        COUNT(rating) as total_ratings 
-      FROM FoodRatings 
-      GROUP BY meal_type`
-    );
-
-    // Get recent comments
-    const [comments] = await db.query(
-      `SELECT r.meal_type, r.rating, r.comment, r.date, s.name as student_name
-       FROM FoodRatings r
-       JOIN Students s ON r.student_id = s.id
-       WHERE r.comment IS NOT NULL AND r.comment != ''
-       ORDER BY r.created_at DESC
-       LIMIT 10`
-    );
-
-    const formattedComments = comments ? comments.map(c => {
-      let dateVal = c.date;
-      if (dateVal instanceof Date) {
-        dateVal = dateVal.toISOString().split('T')[0];
+    const summary = await Feedback.aggregate([
+      {
+        $group: {
+          _id: '$meal_type',
+          average_rating: { $avg: '$rating' },
+          total_ratings: { $sum: 1 }
+        }
       }
-      return { ...c, date: dateVal };
-    }) : [];
+    ]);
+
+    const comments = await Feedback.find({ comments: { $ne: '' } })
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    const formattedComments = comments.map(c => ({
+      meal_type: c.meal_type,
+      rating: c.rating,
+      comment: c.comments,
+      date: c.date,
+      student_name: c.student_name
+    }));
 
     res.status(200).json({
-      summary: rows || [],
+      summary: summary.map(s => ({
+        meal_type: s._id,
+        average_rating: Math.round(s.average_rating * 100) / 100,
+        total_ratings: s.total_ratings
+      })),
       recentComments: formattedComments
     });
   } catch (error) {

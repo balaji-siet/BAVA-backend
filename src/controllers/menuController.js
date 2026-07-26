@@ -1,32 +1,24 @@
-const db = require('../config/db');
+const Menu = require('../models/Menu');
 
 // POST /api/menu/create
 const createMenu = async (req, res) => {
-  const { meal_type, menu_description, serving_date } = req.body;
+  const { meal_type, menu_description, serving_date, day_of_week, items } = req.body;
+  const description = menu_description || items || '';
 
-  if (!meal_type || !menu_description || !serving_date) {
-    return res.status(400).json({ error: 'Meal Type, Menu Description, and Serving Date are required.' });
+  if (!meal_type || !description) {
+    return res.status(400).json({ error: 'Meal Type and Menu Description are required.' });
   }
 
+  const dayVal = day_of_week || serving_date || new Date().toISOString().split('T')[0];
+
   try {
-    const [existing] = await db.query(
-      'SELECT id FROM menus WHERE serving_date = ? AND meal_type = ? LIMIT 1',
-      [serving_date, meal_type]
+    const menu = await Menu.findOneAndUpdate(
+      { day_of_week: dayVal, meal_type },
+      { items: description },
+      { upsert: true, new: true }
     );
 
-    if (existing && existing.length > 0) {
-      await db.query(
-        'UPDATE menus SET menu_description = ? WHERE serving_date = ? AND meal_type = ?',
-        [menu_description, serving_date, meal_type]
-      );
-      res.status(200).json({ message: 'Menu updated successfully' });
-    } else {
-      await db.query(
-        'INSERT INTO menus (meal_type, menu_description, serving_date) VALUES (?, ?, ?)',
-        [meal_type, menu_description, serving_date]
-      );
-      res.status(201).json({ message: 'Menu created successfully' });
-    }
+    res.status(200).json({ message: 'Menu updated successfully', menu });
   } catch (error) {
     console.error('Create menu error:', error);
     res.status(500).json({ error: 'Database connection failed' });
@@ -35,19 +27,21 @@ const createMenu = async (req, res) => {
 
 // PUT /api/menu/update
 const updateMenu = async (req, res) => {
-  const { id, menu_description } = req.body;
+  const { id, menu_description, items } = req.body;
+  const description = menu_description || items;
 
-  if (!id || !menu_description) {
-    return res.status(400).json({ error: 'Menu ID and Menu Description are required.' });
+  if (!id || !description) {
+    return res.status(400).json({ error: 'Menu ID and Description are required.' });
   }
 
   try {
-    await db.query(
-      'UPDATE menus SET menu_description = ? WHERE id = ?',
-      [menu_description, id]
-    );
+    const menu = await Menu.findByIdAndUpdate(id, { items: description }, { new: true });
 
-    res.status(200).json({ message: 'Menu updated successfully' });
+    if (!menu) {
+      return res.status(404).json({ error: 'Menu not found' });
+    }
+
+    res.status(200).json({ message: 'Menu updated successfully', menu });
   } catch (error) {
     console.error('Update menu error:', error);
     res.status(500).json({ error: 'Database connection failed' });
@@ -63,7 +57,7 @@ const deleteMenu = async (req, res) => {
   }
 
   try {
-    await db.query('DELETE FROM menus WHERE id = ?', [id]);
+    await Menu.findByIdAndDelete(id);
     res.status(200).json({ message: 'Menu deleted successfully' });
   } catch (error) {
     console.error('Delete menu error:', error);
@@ -73,15 +67,30 @@ const deleteMenu = async (req, res) => {
 
 // GET /api/menu
 const getMenu = async (req, res) => {
-  const date = req.query.date || new Date().toISOString().split('T')[0];
+  const date = req.query.date || req.query.day_of_week || new Date().toISOString().split('T')[0];
 
   try {
-    const [rows] = await db.query(
-      'SELECT id, meal_type, menu_description, serving_date FROM menus WHERE serving_date = ?',
-      [date]
-    );
+    const menus = await Menu.find({
+      $or: [
+        { day_of_week: date },
+        { day_of_week: 'Monday' },
+        { day_of_week: 'Tuesday' },
+        { day_of_week: 'Wednesday' },
+        { day_of_week: 'Thursday' },
+        { day_of_week: 'Friday' },
+        { day_of_week: 'Saturday' },
+        { day_of_week: 'Sunday' }
+      ]
+    });
 
-    res.status(200).json(rows);
+    const formatted = menus.map(m => ({
+      id: m._id,
+      meal_type: m.meal_type,
+      menu_description: m.items,
+      serving_date: date
+    }));
+
+    res.status(200).json(formatted);
   } catch (error) {
     console.error('Get menu error:', error);
     res.status(500).json({ error: 'Database connection failed' });

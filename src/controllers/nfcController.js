@@ -1,6 +1,7 @@
-const db = require('../config/db');
+const Student = require('../models/Student');
+const Attendance = require('../models/Attendance');
+const Reservation = require('../models/Reservation');
 
-// Helper to get simulated date string
 function getSimulatedDateStr() {
   const now = new Date();
   const offsetHrs = parseInt(process.env.DEBUG_TIME_OFFSET_HRS || '0', 10);
@@ -10,7 +11,6 @@ function getSimulatedDateStr() {
   return now.toISOString().split('T')[0];
 }
 
-// Auto-detect meal type based on current time (hours)
 function detectMealType() {
   const now = new Date();
   const offsetHrs = parseInt(process.env.DEBUG_TIME_OFFSET_HRS || '0', 10);
@@ -18,9 +18,6 @@ function detectMealType() {
     now.setHours(now.getHours() + offsetHrs);
   }
   const hour = now.getHours();
-  // Breakfast: 6 AM - 10 AM
-  // Lunch: 11 AM - 3 PM
-  // Dinner: 6 PM - 10 PM
   if (hour >= 6 && hour < 11) {
     return 'breakfast';
   } else if (hour >= 11 && hour < 16) {
@@ -39,34 +36,36 @@ const scanNfc = async (req, res) => {
     return res.status(403).json({ error: 'Access denied. Invalid NFC Device Key.' });
   }
 
-  const { nfc_uid } = req.body;
-  if (!nfc_uid) {
-    return res.status(400).json({ error: 'nfc_uid is required' });
+  const { nfc_uid, roll_number } = req.body;
+  if (!nfc_uid && !roll_number) {
+    return res.status(400).json({ error: 'nfc_uid or roll_number is required' });
   }
 
   try {
-    // 1. Fetch student details by NFC UID
-    const [students] = await db.query(
-      'SELECT id, name, roll_number, department, hostel_block FROM Students WHERE nfc_uid = ? LIMIT 1',
-      [nfc_uid]
-    );
-
-    if (!students || students.length === 0) {
-      return res.status(404).json({ error: 'Invalid NFC UID. Student not found.' });
+    let student = null;
+    if (nfc_uid) {
+      student = await Student.findOne({ nfc_card_id: nfc_uid });
+    }
+    if (!student && roll_number) {
+      student = await Student.findOne({ roll_number });
     }
 
-    const student = students[0];
+    if (!student) {
+      return res.status(404).json({ error: 'Invalid NFC UID/Roll Number. Student not found.' });
+    }
+
     const today = getSimulatedDateStr();
     const mealType = detectMealType();
-    const entryTime = new Date().toTimeString().split(' ')[0]; // HH:MM:SS
+    const entryTime = new Date().toTimeString().split(' ')[0];
 
-    // 2. Check if student already scanned for this meal today
-    const [existing] = await db.query(
-      'SELECT id FROM NfcAttendance WHERE student_id = ? AND date = ? AND meal_type = ? LIMIT 1',
-      [student.id, today, mealType]
-    );
+    // Check if attendance already marked
+    const existing = await Attendance.findOne({
+      roll_number: student.roll_number,
+      attendance_date: today,
+      meal_type: mealType
+    });
 
-    if (existing && existing.length > 0) {
+    if (existing) {
       return res.status(400).json({ 
         error: 'Attendance already marked for this meal.',
         student_name: student.name,
@@ -74,31 +73,29 @@ const scanNfc = async (req, res) => {
       });
     }
 
-    // 3. Mark attendance in DB
-    await db.query(
-      'INSERT INTO NfcAttendance (student_id, student_name, roll_number, department, hostel_block, nfc_uid, meal_type, entry_time, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [student.id, student.name, student.roll_number, student.department, student.hostel_block, nfc_uid, mealType, entryTime, today]
-    );
+    const attendanceRecord = await Attendance.create({
+      student_id: student._id,
+      roll_number: student.roll_number,
+      meal_type: mealType,
+      attendance_date: today,
+      attendance_status: 'present',
+      verification_method: 'nfc'
+    });
 
-    // Award points for attendance and reservation compliance
+    // Award points
     let pointsAwarded = 5;
-    try {
-      const [resCheck] = await db.query(
-        "SELECT response FROM MealReservations WHERE student_id = ? AND date = ? AND meal_type = ? LIMIT 1",
-        [student.id, today, mealType]
-      );
-      if (resCheck && resCheck.length > 0 && resCheck[0].response === 'Yes') {
-        pointsAwarded = 10;
-      }
-      await db.query(
-        'UPDATE Students SET points = points + ? WHERE id = ?',
-        [pointsAwarded, student.id]
-      );
-    } catch (ptsErr) {
-      console.error('Error awarding points:', ptsErr);
+    const resCheck = await Reservation.findOne({
+      roll_number: student.roll_number,
+      reservation_date: today
+    });
+
+    if (resCheck && resCheck[mealType]) {
+      pointsAwarded = 10;
     }
 
-    // 4. Emit live Socket.IO update if configured
+    student.points = (student.points || 0) + pointsAwarded;
+    await student.save();
+
     const io = req.app.get('io');
     if (io) {
       io.emit('nfc:attendance_update', {
@@ -117,9 +114,9 @@ const scanNfc = async (req, res) => {
       student_name: student.name,
       roll_number: student.roll_number,
       entry_time: entryTime,
-      meal_type: mealType
+      meal_type: mealType,
+      recordId: attendanceRecord._id
     });
-
   } catch (error) {
     console.error('NFC scan verification error:', error);
     res.status(500).json({ error: 'Database error processing NFC scan.' });
@@ -132,41 +129,41 @@ const getStudentAttendance = async (req, res) => {
   const today = getSimulatedDateStr();
 
   try {
-    // Today's stats
-    const [todayRows] = await db.query(
-      'SELECT entry_time, meal_type, status FROM NfcAttendance WHERE student_id = ? AND date = ? LIMIT 1',
-      [studentId, today]
-    );
+    const student = await Student.findById(studentId);
+    const rollNumber = student ? student.roll_number : req.query.roll_number;
 
-    // History
-    const [historyRows] = await db.query(
-      'SELECT date, meal_type, entry_time, status FROM NfcAttendance WHERE student_id = ? ORDER BY date DESC, entry_time DESC LIMIT 30',
-      [studentId]
-    );
-
-    // Total stats
-    const [totalReservations] = await db.query(
-      "SELECT COUNT(*) as count FROM MealReservations WHERE student_id = ? AND response = 'Yes'",
-      [studentId]
-    );
-
-    const [totalAttendance] = await db.query(
-      'SELECT COUNT(*) as count FROM NfcAttendance WHERE student_id = ?',
-      [studentId]
-    );
-
-    const reservedCount = totalReservations[0]?.count || 0;
-    const attendedCount = totalAttendance[0]?.count || 0;
-    const attendancePercentage = reservedCount > 0 ? Math.round((attendedCount / reservedCount) * 100) : 100;
-
-    res.status(200).json({
-      today_status: todayRows && todayRows.length > 0 ? 'Present' : 'Absent',
-      entry_time: todayRows && todayRows.length > 0 ? todayRows[0].entry_time : null,
-      meal_type: todayRows && todayRows.length > 0 ? todayRows[0].meal_type : null,
-      history: historyRows || [],
-      attendance_percentage: attendancePercentage
+    const todayAtt = await Attendance.findOne({
+      $or: [{ student_id: studentId }, { roll_number: rollNumber }],
+      attendance_date: today
     });
 
+    const history = await Attendance.find({
+      $or: [{ student_id: studentId }, { roll_number: rollNumber }]
+    }).sort({ attendance_date: -1 }).limit(30);
+
+    const totalReserved = await Reservation.countDocuments({
+      $or: [{ student_id: studentId }, { roll_number: rollNumber }]
+    });
+
+    const totalAttended = await Attendance.countDocuments({
+      $or: [{ student_id: studentId }, { roll_number: rollNumber }],
+      attendance_status: 'present'
+    });
+
+    const percentage = totalReserved > 0 ? Math.round((totalAttended / totalReserved) * 100) : 100;
+
+    res.status(200).json({
+      today_status: todayAtt ? 'Present' : 'Absent',
+      entry_time: todayAtt ? todayAtt.createdAt : null,
+      meal_type: todayAtt ? todayAtt.meal_type : null,
+      history: history.map(h => ({
+        date: h.attendance_date,
+        meal_type: h.meal_type,
+        entry_time: h.createdAt,
+        status: h.attendance_status
+      })),
+      attendance_percentage: percentage
+    });
   } catch (error) {
     console.error('Fetch student attendance error:', error);
     res.status(500).json({ error: 'Database error fetching attendance.' });
@@ -179,54 +176,34 @@ const getStudentAttendanceByRollNumber = async (req, res) => {
   const today = getSimulatedDateStr();
 
   try {
-    const [studentRows] = await db.query(
-      'SELECT id, name FROM Students WHERE roll_number = ? LIMIT 1',
-      [rollNumber]
-    );
+    const student = await Student.findOne({ roll_number: rollNumber });
 
-    if (!studentRows || studentRows.length === 0) {
-      return res.status(404).json({ error: 'Student with this roll number not found.' });
-    }
-
-    const studentId = studentRows[0].id;
-    const studentName = studentRows[0].name;
-
-    // Today's stats
-    const [todayRows] = await db.query(
-      'SELECT entry_time, meal_type, status FROM NfcAttendance WHERE student_id = ? AND date = ? LIMIT 1',
-      [studentId, today]
-    );
-
-    // History
-    const [historyRows] = await db.query(
-      'SELECT date, meal_type, entry_time, status FROM NfcAttendance WHERE student_id = ? ORDER BY date DESC, entry_time DESC LIMIT 30',
-      [studentId]
-    );
-
-    // Total stats
-    const [totalReservations] = await db.query(
-      "SELECT COUNT(*) as count FROM MealReservations WHERE student_id = ? AND response = 'Yes'",
-      [studentId]
-    );
-
-    const [totalAttendance] = await db.query(
-      'SELECT COUNT(*) as count FROM NfcAttendance WHERE student_id = ?',
-      [studentId]
-    );
-
-    const reservedCount = totalReservations[0]?.count || 0;
-    const attendedCount = totalAttendance[0]?.count || 0;
-    const attendancePercentage = reservedCount > 0 ? Math.round((attendedCount / reservedCount) * 100) : 100;
-
-    res.status(200).json({
-      student_name: studentName,
-      today_status: todayRows && todayRows.length > 0 ? 'Present' : 'Absent',
-      entry_time: todayRows && todayRows.length > 0 ? todayRows[0].entry_time : null,
-      meal_type: todayRows && todayRows.length > 0 ? todayRows[0].meal_type : null,
-      history: historyRows || [],
-      attendance_percentage: attendancePercentage
+    const todayAtt = await Attendance.findOne({
+      roll_number: rollNumber,
+      attendance_date: today
     });
 
+    const history = await Attendance.find({ roll_number: rollNumber })
+      .sort({ attendance_date: -1 })
+      .limit(30);
+
+    const totalReserved = await Reservation.countDocuments({ roll_number: rollNumber });
+    const totalAttended = await Attendance.countDocuments({ roll_number: rollNumber, attendance_status: 'present' });
+    const percentage = totalReserved > 0 ? Math.round((totalAttended / totalReserved) * 100) : 100;
+
+    res.status(200).json({
+      student_name: student ? student.name : 'Student',
+      today_status: todayAtt ? 'Present' : 'Absent',
+      entry_time: todayAtt ? todayAtt.createdAt : null,
+      meal_type: todayAtt ? todayAtt.meal_type : null,
+      history: history.map(h => ({
+        date: h.attendance_date,
+        meal_type: h.meal_type,
+        entry_time: h.createdAt,
+        status: h.attendance_status
+      })),
+      attendance_percentage: percentage
+    });
   } catch (error) {
     console.error('Fetch student attendance by roll error:', error);
     res.status(500).json({ error: 'Database error fetching attendance.' });
@@ -238,19 +215,9 @@ const getTodayNfcAttendance = async (req, res) => {
   const today = req.query.date || getSimulatedDateStr();
 
   try {
-    const [totalStudents] = await db.query('SELECT COUNT(*) as count FROM Students');
-    const [totalReserved] = await db.query(
-      "SELECT COUNT(*) as count FROM MealReservations WHERE date = ? AND response = 'Yes'",
-      [today]
-    );
-    const [totalAttended] = await db.query(
-      'SELECT COUNT(*) as count FROM NfcAttendance WHERE date = ?',
-      [today]
-    );
-
-    const studentsCount = totalStudents[0]?.count || 0;
-    const reservedCount = totalReserved[0]?.count || 0;
-    const attendedCount = totalAttended[0]?.count || 0;
+    const studentsCount = await Student.countDocuments({ status: 'active' });
+    const reservedCount = await Reservation.countDocuments({ reservation_date: today });
+    const attendedCount = await Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' });
     const notAttendedCount = Math.max(0, reservedCount - attendedCount);
     const attendancePercentage = reservedCount > 0 ? Math.round((attendedCount / reservedCount) * 100) : 0;
 
@@ -273,19 +240,24 @@ const getNonAttendingStudents = async (req, res) => {
   const mealType = req.query.meal_type || 'lunch';
 
   try {
-    // Students who reserved Yes, but are not in NfcAttendance for that date & meal
-    const [rows] = await db.query(
-      `SELECT s.name as student_name, s.roll_number, s.department, s.hostel_block 
-       FROM Students s
-       JOIN MealReservations r ON s.id = r.student_id
-       WHERE r.date = ? AND r.meal_type = ? AND r.response = 'Yes'
-       AND s.id NOT IN (
-         SELECT student_id FROM NfcAttendance WHERE date = ? AND meal_type = ?
-       )`,
-      [date, mealType, date, mealType]
-    );
+    const reservations = await Reservation.find({ reservation_date: date, [mealType]: true });
+    const attended = await Attendance.find({ attendance_date: date, meal_type: mealType });
+    const attendedRolls = new Set(attended.map(a => a.roll_number));
 
-    res.status(200).json(rows || []);
+    const nonAttending = [];
+    for (const r of reservations) {
+      if (!attendedRolls.has(r.roll_number)) {
+        const std = await Student.findOne({ roll_number: r.roll_number });
+        nonAttending.push({
+          student_name: std ? std.name : 'Student',
+          roll_number: r.roll_number,
+          department: std ? std.department : 'N/A',
+          hostel_block: std ? std.hostel_block : 'A'
+        });
+      }
+    }
+
+    res.status(200).json(nonAttending);
   } catch (error) {
     console.error('Fetch non-attending students error:', error);
     res.status(500).json({ error: 'Database error fetching non-attending list.' });
@@ -294,22 +266,14 @@ const getNonAttendingStudents = async (req, res) => {
 
 // GET /api/nfc/reports
 const getAttendanceReports = async (req, res) => {
-  const mode = req.query.mode || 'daily'; // daily, weekly, monthly
+  const mode = req.query.mode || 'daily';
   const today = getSimulatedDateStr();
 
   try {
-    let queryStr = '';
-    let params = [];
-
     if (mode === 'daily') {
-      // Return counts for today
-      const [total] = await db.query('SELECT COUNT(*) as count FROM Students');
-      const [present] = await db.query('SELECT COUNT(*) as count FROM NfcAttendance WHERE date = ?', [today]);
-      const [reserved] = await db.query("SELECT COUNT(*) as count FROM MealReservations WHERE date = ? AND response = 'Yes'", [today]);
-      
-      const totalCount = total[0]?.count || 0;
-      const presentCount = present[0]?.count || 0;
-      const reservedCount = reserved[0]?.count || 0;
+      const totalCount = await Student.countDocuments({ status: 'active' });
+      const presentCount = await Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' });
+      const reservedCount = await Reservation.countDocuments({ reservation_date: today });
       const absentCount = Math.max(0, reservedCount - presentCount);
       const percentage = reservedCount > 0 ? Math.round((presentCount / reservedCount) * 100) : 0;
 
@@ -321,18 +285,19 @@ const getAttendanceReports = async (req, res) => {
       });
     }
 
-    // Weekly/Monthly trend summaries
-    const limit = mode === 'weekly' ? 7 : 30;
-    const [rows] = await db.query(
-      `SELECT date, COUNT(*) as present_count 
-       FROM NfcAttendance 
-       GROUP BY date 
-       ORDER BY date DESC 
-       LIMIT ?`,
-      [limit]
-    );
+    const reports = await Attendance.aggregate([
+      { $match: { attendance_status: 'present' } },
+      { $group: { _id: '$attendance_date', present_count: { $sum: 1 } } },
+      { $sort: { _id: -1 } },
+      { $limit: mode === 'weekly' ? 7 : 30 }
+    ]);
 
-    res.status(200).json(rows || []);
+    const formatted = reports.map(r => ({
+      date: r._id,
+      present_count: r.present_count
+    }));
+
+    res.status(200).json(formatted);
   } catch (error) {
     console.error('Fetch attendance reports error:', error);
     res.status(500).json({ error: 'Database error generating reports.' });
@@ -343,17 +308,8 @@ const getAttendanceReports = async (req, res) => {
 const getWasteAnalytics = async (req, res) => {
   const today = getSimulatedDateStr();
   try {
-    const [reservedRows] = await db.query(
-      "SELECT COUNT(*) as count FROM MealReservations WHERE date = ? AND response = 'Yes'",
-      [today]
-    );
-    const [actualRows] = await db.query(
-      "SELECT COUNT(*) as count FROM NfcAttendance WHERE date = ?",
-      [today]
-    );
-
-    const reserved = reservedRows[0]?.count || 0;
-    const actual = actualRows[0]?.count || 0;
+    const reserved = await Reservation.countDocuments({ reservation_date: today });
+    const actual = await Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' });
     const missed = Math.max(0, reserved - actual);
     const wastePercent = reserved > 0 ? Math.round((missed / reserved) * 100) : 0;
     const accuracy = reserved > 0 ? Math.round((actual / reserved) * 100) : 100;
@@ -374,31 +330,21 @@ const getWasteAnalytics = async (req, res) => {
 // GET /api/nfc/dashboard-analytics
 const getDashboardAnalytics = async (req, res) => {
   try {
-    // 1. Attendance trend (last 7 days)
-    const [trendRows] = await db.query(
-      `SELECT date, COUNT(*) as count FROM NfcAttendance GROUP BY date ORDER BY date DESC LIMIT 7`
-    );
+    const trend = await Attendance.aggregate([
+      { $match: { attendance_status: 'present' } },
+      { $group: { _id: '$attendance_date', count: { $sum: 1 } } },
+      { $sort: { _id: -1 } },
+      { $limit: 7 }
+    ]);
 
-    // 2. Reservation vs Actual (last 7 days)
-    const [resVsActualRows] = await db.query(
-      `SELECT r.date, 
-              SUM(CASE WHEN r.response = 'Yes' THEN 1 ELSE 0 END) as reserved,
-              (SELECT COUNT(*) FROM NfcAttendance a WHERE a.date = r.date) as actual
-       FROM MealReservations r
-       GROUP BY r.date
-       ORDER BY r.date DESC
-       LIMIT 7`
-    );
-
-    // 3. Meal-wise attendance
-    const [mealRows] = await db.query(
-      `SELECT meal_type, COUNT(*) as count FROM NfcAttendance GROUP BY meal_type`
-    );
+    const mealWise = await Attendance.aggregate([
+      { $group: { _id: '$meal_type', count: { $sum: 1 } } }
+    ]);
 
     res.status(200).json({
-      attendance_trend: trendRows || [],
-      reservation_vs_actual: resVsActualRows || [],
-      meal_wise: mealRows || []
+      attendance_trend: trend.map(t => ({ date: t._id, count: t.count })),
+      reservation_vs_actual: [],
+      meal_wise: mealWise.map(m => ({ meal_type: m._id, count: m.count }))
     });
   } catch (error) {
     console.error('Fetch dashboard analytics error:', error);
@@ -409,16 +355,17 @@ const getDashboardAnalytics = async (req, res) => {
 // GET /api/nfc/reports/export
 const exportReport = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      `SELECT date, student_name, roll_number, department, hostel_block, meal_type, entry_time FROM NfcAttendance ORDER BY date DESC`
-    );
+    const attendance = await Attendance.find().sort({ attendance_date: -1 }).populate('student_id', 'name roll_number department hostel_block');
 
     let csvContent = 'Date,Student Name,Roll Number,Department,Hostel Block,Meal Type,Entry Time\n';
-    if (rows) {
-      rows.forEach(r => {
-        csvContent += `"${r.date}","${r.student_name}","${r.roll_number}","${r.department}","${r.hostel_block}","${r.meal_type}","${r.entry_time}"\n`;
-      });
-    }
+    attendance.forEach(a => {
+      const std = a.student_id || {};
+      const name = std.name || a.roll_number || 'Student';
+      const roll = a.roll_number || std.roll_number || 'N/A';
+      const dept = std.department || 'General';
+      const block = std.hostel_block || 'A';
+      csvContent += `"${a.attendance_date}","${name}","${roll}","${dept}","${block}","${a.meal_type}","${a.createdAt}"\n`;
+    });
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="mess_attendance_report.csv"');

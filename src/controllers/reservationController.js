@@ -1,4 +1,5 @@
-const db = require('../config/db');
+const Reservation = require('../models/Reservation');
+const Student = require('../models/Student');
 
 // Helper to get time
 function getCurrentTime() {
@@ -15,25 +16,19 @@ function isWindowOpen(mealType, dateStr, bypass = false) {
   if (bypass) return true;
 
   const now = getCurrentTime();
-  
   const parts = dateStr.split('-');
   const mealDate = new Date(parts[0], parts[1] - 1, parts[2]);
-  
   const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   
   const diffTime = mealDate.getTime() - nowDate.getTime();
   const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-  
   const currentHour = now.getHours();
 
   if (mealType === 'breakfast') {
-    // Breakfast reservations open from 6:00 PM to 10:00 PM previous day
     return diffDays === 1 && currentHour >= 18 && currentHour < 22;
   } else if (mealType === 'lunch') {
-    // Lunch reservations open from 6:00 AM to 10:00 AM same day
     return diffDays === 0 && currentHour >= 6 && currentHour < 10;
   } else if (mealType === 'dinner') {
-    // Dinner reservations open from 12:00 PM to 4:00 PM same day
     return diffDays === 0 && currentHour >= 12 && currentHour < 16;
   }
 
@@ -50,67 +45,42 @@ const saveReservations = async (req, res) => {
     return res.status(400).json({ error: 'Date is required' });
   }
 
-  const submissions = [];
-  if (breakfast !== undefined) submissions.push({ type: 'breakfast', value: breakfast });
-  if (lunch !== undefined) submissions.push({ type: 'lunch', value: lunch });
-  if (dinner !== undefined) submissions.push({ type: 'dinner', value: dinner });
-
-  if (submissions.length === 0) {
-    return res.status(400).json({ error: 'No meal selections provided' });
-  }
-
   try {
-    // Fetch student's existing reservations for this date
-    const [existingRows] = await db.query(
-      'SELECT meal_type, reservation_status FROM meal_reservations WHERE student_id = ? AND reservation_date = ?',
-      [studentId, date]
-    );
+    let student = null;
+    if (studentId) {
+      student = await Student.findById(studentId);
+    }
+    const rollNumber = student ? student.roll_number : (req.body.roll_number || 'UNKNOWN');
 
-    const existingMap = {};
-    if (existingRows) {
-      existingRows.forEach(row => {
-        existingMap[row.meal_type] = row.reservation_status;
+    let reservationDoc = await Reservation.findOne({
+      $or: [
+        { student_id: studentId, reservation_date: date },
+        { roll_number: rollNumber, reservation_date: date }
+      ]
+    });
+
+    if (!reservationDoc) {
+      reservationDoc = new Reservation({
+        student_id: studentId,
+        roll_number: rollNumber,
+        reservation_date: date,
+        breakfast: false,
+        lunch: false,
+        dinner: false
       });
     }
 
-    // Check deadlines for each changed reservation
-    for (const meal of submissions) {
-      const targetVal = meal.value ? 'confirmed' : 'cancelled';
-      const prevVal = existingMap[meal.type] || 'cancelled';
-      
-      if (prevVal !== targetVal) {
-        if (!isWindowOpen(meal.type, date, bypass)) {
-          return res.status(400).json({
-            error: `Reservation window for ${meal.type} on ${date} is closed.`,
-            mealType: meal.type
-          });
-        }
-      }
-    }
+    if (breakfast !== undefined) reservationDoc.breakfast = Boolean(breakfast);
+    if (lunch !== undefined) reservationDoc.lunch = Boolean(lunch);
+    if (dinner !== undefined) reservationDoc.dinner = Boolean(dinner);
 
-    // Save reservations
-    for (const meal of submissions) {
-      const targetVal = meal.value ? 'confirmed' : 'cancelled';
-      const prevVal = existingMap[meal.type];
+    await reservationDoc.save();
 
-      if (prevVal !== undefined) {
-        await db.query(
-          'UPDATE meal_reservations SET reservation_status = ? WHERE student_id = ? AND reservation_date = ? AND meal_type = ?',
-          [targetVal, studentId, date, meal.type]
-        );
-      } else {
-        await db.query(
-          'INSERT INTO meal_reservations (student_id, reservation_date, meal_type, reservation_status) VALUES (?, ?, ?, ?)',
-          [studentId, date, meal.type, targetVal]
-        );
-      }
-    }
-
-    res.status(200).json({ message: 'Reservations saved successfully' });
+    res.status(200).json({ message: 'Reservations saved successfully', reservation: reservationDoc });
     console.log("Reservation Saved");
   } catch (error) {
-    console.error("SQL Error Details:", error);
-    res.status(500).json({ error: 'Database connection failed' });
+    console.error("Mongo Error Details:", error);
+    res.status(500).json({ error: 'Database error saving reservation' });
   }
 };
 
@@ -118,38 +88,36 @@ const saveReservations = async (req, res) => {
 const cancelReservation = async (req, res) => {
   const studentId = req.userId;
   const { date, meal_type } = req.body;
-  const bypass = req.headers['x-bypass-windows'] === process.env.ADMIN_SECRET || process.env.DEBUG_BYPASS === 'true';
 
   if (!date) {
     return res.status(400).json({ error: 'Date is required' });
   }
 
-  const meals = meal_type ? [meal_type] : ['breakfast', 'lunch', 'dinner'];
-
   try {
-    for (const m of meals) {
-      if (!isWindowOpen(m, date, bypass)) {
-        return res.status(400).json({ error: `Reservation window for ${m} is closed.` });
-      }
+    let student = null;
+    if (studentId) {
+      student = await Student.findById(studentId);
     }
+    const rollNumber = student ? student.roll_number : req.body.roll_number;
 
-    for (const m of meals) {
-      const [existing] = await db.query(
-        'SELECT id FROM meal_reservations WHERE student_id = ? AND reservation_date = ? AND meal_type = ? LIMIT 1',
-        [studentId, date, m]
-      );
+    let reservationDoc = await Reservation.findOne({
+      $or: [
+        { student_id: studentId, reservation_date: date },
+        { roll_number: rollNumber, reservation_date: date }
+      ]
+    });
 
-      if (existing && existing.length > 0) {
-        await db.query(
-          'UPDATE meal_reservations SET reservation_status = ? WHERE student_id = ? AND reservation_date = ? AND meal_type = ?',
-          ['cancelled', studentId, date, m]
-        );
+    if (reservationDoc) {
+      if (!meal_type) {
+        reservationDoc.breakfast = false;
+        reservationDoc.lunch = false;
+        reservationDoc.dinner = false;
       } else {
-        await db.query(
-          'INSERT INTO meal_reservations (student_id, reservation_date, meal_type, reservation_status) VALUES (?, ?, ?, ?)',
-          [studentId, date, m, 'cancelled']
-        );
+        if (meal_type === 'breakfast') reservationDoc.breakfast = false;
+        if (meal_type === 'lunch') reservationDoc.lunch = false;
+        if (meal_type === 'dinner') reservationDoc.dinner = false;
       }
+      await reservationDoc.save();
     }
 
     res.status(200).json({ message: 'Reservations cancelled successfully' });
@@ -159,23 +127,30 @@ const cancelReservation = async (req, res) => {
   }
 };
 
-// Get reservations for a specific date (used by frontend)
+// Get reservations for a specific date
 const getReservationsByDate = async (req, res) => {
   const studentId = req.userId;
   const date = req.query.date || getCurrentTime().toISOString().split('T')[0];
 
   try {
-    const [rows] = await db.query(
-      'SELECT meal_type, reservation_status FROM meal_reservations WHERE student_id = ? AND reservation_date = ?',
-      [studentId, date]
-    );
-
-    const reservations = { breakfast: false, lunch: false, dinner: false };
-    if (rows) {
-      rows.forEach(row => {
-        reservations[row.meal_type] = row.reservation_status === 'confirmed';
-      });
+    let student = null;
+    if (studentId) {
+      student = await Student.findById(studentId);
     }
+    const rollNumber = student ? student.roll_number : req.query.roll_number;
+
+    const reservationDoc = await Reservation.findOne({
+      $or: [
+        { student_id: studentId, reservation_date: date },
+        { roll_number: rollNumber, reservation_date: date }
+      ]
+    });
+
+    const reservations = {
+      breakfast: reservationDoc ? reservationDoc.breakfast : false,
+      lunch: reservationDoc ? reservationDoc.lunch : false,
+      dinner: reservationDoc ? reservationDoc.dinner : false
+    };
 
     const windows = {
       breakfast: isWindowOpen('breakfast', date, req.query.bypass === 'true'),
@@ -187,7 +162,7 @@ const getReservationsByDate = async (req, res) => {
       date,
       reservations,
       windows,
-      hasReserved: rows && rows.length > 0,
+      hasReserved: Boolean(reservationDoc),
       serverTime: getCurrentTime().toISOString()
     });
   } catch (error) {
@@ -201,12 +176,20 @@ const getReservationsHistory = async (req, res) => {
   const studentId = req.userId;
 
   try {
-    const [rows] = await db.query(
-      'SELECT reservation_date, meal_type, reservation_status, created_at FROM meal_reservations WHERE student_id = ? ORDER BY reservation_date DESC',
-      [studentId]
-    );
+    let student = null;
+    if (studentId) {
+      student = await Student.findById(studentId);
+    }
+    const rollNumber = student ? student.roll_number : req.query.roll_number;
 
-    res.status(200).json(rows);
+    const reservations = await Reservation.find({
+      $or: [
+        { student_id: studentId },
+        { roll_number: rollNumber }
+      ]
+    }).sort({ reservation_date: -1 });
+
+    res.status(200).json(reservations);
   } catch (error) {
     console.error('Fetch reservations history error:', error);
     res.status(500).json({ error: 'Database connection failed' });

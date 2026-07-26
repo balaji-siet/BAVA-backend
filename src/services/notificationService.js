@@ -1,8 +1,7 @@
 const cron = require('node-cron');
-const db = require('../config/db');
+const Reservation = require('../models/Reservation');
 require('dotenv').config();
 
-// Get simulated current date string helper
 function getSimulatedDateStr(offsetDays = 0) {
   const now = new Date();
   const offsetHrs = parseInt(process.env.DEBUG_TIME_OFFSET_HRS || '0', 10);
@@ -74,16 +73,13 @@ ${message}
   console.log(`Notification Service: SMS notification sent to ${to}. Message SID: ${result.sid}`);
 }
 
-// Send the notification report
 async function sendMealReport(mealType, targetDate, customTime, customPhoneNumber) {
   try {
-    // 1. Fetch counts from database
-    const [rows] = await db.query(
-      "SELECT COUNT(*) AS count FROM meal_reservations WHERE reservation_date = ? AND meal_type = ? AND reservation_status = 'confirmed'",
-      [targetDate, mealType]
-    );
+    const count = await Reservation.countDocuments({
+      reservation_date: targetDate,
+      [mealType]: true
+    });
 
-    const count = (rows && rows[0]) ? rows[0].count : 0;
     const displayTime = customTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const smsMessage = `Sri Shakthi Smart Mess final ${mealType.toUpperCase()} report for ${targetDate}: ${count} student(s) confirmed. Cutoff closed at ${displayTime}.`;
 
@@ -95,25 +91,21 @@ async function sendMealReport(mealType, targetDate, customTime, customPhoneNumbe
   }
 }
 
-// Initialize cron schedules
 function initializeSchedules() {
   console.log('Notification Service: Initializing scheduled reservation cutoffs...');
 
-  // 1. Lunch Cutoff - 10:00 AM daily
   cron.schedule('0 10 * * *', async () => {
     const today = getSimulatedDateStr();
     console.log('Cron: Triggering Lunch reservation cutoff report...');
     await sendMealReport('lunch', today);
   });
 
-  // 2. Dinner Cutoff - 4:00 PM (16:00) daily
   cron.schedule('0 16 * * *', async () => {
     const today = getSimulatedDateStr();
     console.log('Cron: Triggering Dinner reservation cutoff report...');
     await sendMealReport('dinner', today);
   });
 
-  // 3. Breakfast Cutoff - 10:00 PM (22:00) daily (for tomorrow's breakfast)
   cron.schedule('0 22 * * *', async () => {
     const tomorrow = getSimulatedDateStr(1);
     console.log('Cron: Triggering Breakfast reservation cutoff report...');

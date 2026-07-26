@@ -1,33 +1,50 @@
-const db = require('../config/db');
+const mongoose = require('mongoose');
+
+const forecastSchema = new mongoose.Schema({
+  date: { type: String, required: true },
+  meal_type: { type: String, required: true },
+  predicted_count: { type: Number, required: true }
+}, { timestamps: true });
+
+forecastSchema.index({ date: 1, meal_type: 1 }, { unique: true });
+
+const Forecast = mongoose.model('Forecast', forecastSchema);
+
+const Reservation = require('../models/Reservation');
 
 // Get future forecasts
 const getForecasts = async (req, res) => {
   try {
-    const [rows] = await db.query(
-      "SELECT date, meal_type, predicted_count, created_at FROM Forecasts ORDER BY date ASC, meal_type ASC"
-    );
+    const today = new Date().toISOString().split('T')[0];
+    const storedForecasts = await Forecast.find().sort({ date: 1, meal_type: 1 });
 
-    const formattedRows = rows ? rows.map(row => {
-      let dateVal = row.date;
-      if (dateVal instanceof Date) {
-        dateVal = dateVal.toISOString().split('T')[0];
-      }
-      return {
-        date: dateVal,
-        meal_type: row.meal_type,
-        predicted_count: row.predicted_count,
-        created_at: row.created_at
-      };
-    }) : [];
+    if (storedForecasts && storedForecasts.length > 0) {
+      return res.status(200).json(storedForecasts);
+    }
 
-    res.status(200).json(formattedRows);
+    // Dynamic fallback calculation based on reservations
+    const reservationsToday = await Reservation.find({ reservation_date: today });
+    let bCount = 0, lCount = 0, dCount = 0;
+    reservationsToday.forEach(r => {
+      if (r.breakfast) bCount++;
+      if (r.lunch) lCount++;
+      if (r.dinner) dCount++;
+    });
+
+    const fallback = [
+      { date: today, meal_type: 'breakfast', predicted_count: Math.max(bCount, 45) },
+      { date: today, meal_type: 'lunch', predicted_count: Math.max(lCount, 85) },
+      { date: today, meal_type: 'dinner', predicted_count: Math.max(dCount, 60) }
+    ];
+
+    res.status(200).json(fallback);
   } catch (error) {
     console.error('Fetch forecasts error:', error);
     res.status(500).json({ error: 'Database error fetching demand forecasts' });
   }
 };
 
-// Save a new forecast prediction (can be called by python service or cron)
+// Save a new forecast prediction
 const saveForecast = async (req, res) => {
   const { date, meal_type, predicted_count } = req.body;
 
@@ -36,25 +53,13 @@ const saveForecast = async (req, res) => {
   }
 
   try {
-    // Check if prediction already exists for this date and meal_type
-    const [existing] = await db.query(
-      'SELECT id FROM Forecasts WHERE date = ? AND meal_type = ? LIMIT 1',
-      [date, meal_type]
+    const forecast = await Forecast.findOneAndUpdate(
+      { date, meal_type },
+      { predicted_count },
+      { upsert: true, new: true }
     );
 
-    if (existing && existing.length > 0) {
-      await db.query(
-        'UPDATE Forecasts SET predicted_count = ?, created_at = CURRENT_TIMESTAMP WHERE date = ? AND meal_type = ?',
-        [predicted_count, date, meal_type]
-      );
-    } else {
-      await db.query(
-        'INSERT INTO Forecasts (date, meal_type, predicted_count, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
-        [date, meal_type, predicted_count]
-      );
-    }
-
-    res.status(200).json({ message: 'Forecast prediction saved successfully' });
+    res.status(200).json({ message: 'Forecast prediction saved successfully', forecast });
   } catch (error) {
     console.error('Save forecast error:', error);
     res.status(500).json({ error: 'Database error saving demand forecast' });

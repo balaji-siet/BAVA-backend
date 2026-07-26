@@ -1,71 +1,51 @@
-const db = require('../config/db');
+const Student = require('../models/Student');
+const Reservation = require('../models/Reservation');
+const Attendance = require('../models/Attendance');
 
 // GET /api/dashboard
 const getDashboardAnalytics = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    // 1. Total Students
-    const [studentCountRows] = await db.query('SELECT COUNT(*) as count FROM students WHERE status = "active"');
-    const totalStudents = studentCountRows ? studentCountRows[0].count : 0;
+    // 1. Total Active Students
+    const totalStudents = await Student.countDocuments({ status: 'active' });
 
     // 2. Breakfast, Lunch, Dinner reservations for today
-    const [breakfastResRows] = await db.query(
-      'SELECT COUNT(*) as count FROM meal_reservations WHERE reservation_date = ? AND meal_type = "breakfast" AND reservation_status = "confirmed"',
-      [today]
-    );
-    const [lunchResRows] = await db.query(
-      'SELECT COUNT(*) as count FROM meal_reservations WHERE reservation_date = ? AND meal_type = "lunch" AND reservation_status = "confirmed"',
-      [today]
-    );
-    const [dinnerResRows] = await db.query(
-      'SELECT COUNT(*) as count FROM meal_reservations WHERE reservation_date = ? AND meal_type = "dinner" AND reservation_status = "confirmed"',
-      [today]
-    );
+    const reservationsToday = await Reservation.find({ reservation_date: today });
+    let breakfastReservations = 0;
+    let lunchReservations = 0;
+    let dinnerReservations = 0;
 
-    const breakfastReservations = breakfastResRows ? breakfastResRows[0].count : 0;
-    const lunchReservations = lunchResRows ? lunchResRows[0].count : 0;
-    const dinnerReservations = dinnerResRows ? dinnerResRows[0].count : 0;
+    reservationsToday.forEach(r => {
+      if (r.breakfast) breakfastReservations++;
+      if (r.lunch) lunchReservations++;
+      if (r.dinner) dinnerReservations++;
+    });
 
     // 3. Daily Attendance (today)
-    const [dailyAttRows] = await db.query(
-      'SELECT COUNT(*) as count FROM attendance WHERE attendance_date = ? AND attendance_status = "present"',
-      [today]
-    );
-    const dailyAttendance = dailyAttRows ? dailyAttRows[0].count : 0;
+    const dailyAttendance = await Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' });
 
     // 4. Weekly Attendance (past 7 days)
-    const [weeklyAttRows] = await db.query(
-      "SELECT COUNT(*) as count FROM attendance WHERE attendance_date >= date('now', '-7 days') AND attendance_status = 'present'"
-    ).catch(async () => {
-      // Fallback for MySQL
-      return db.query("SELECT COUNT(*) as count FROM attendance WHERE attendance_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND attendance_status = 'present'");
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const weeklyAttendance = await Attendance.countDocuments({
+      attendance_date: { $gte: sevenDaysAgo },
+      attendance_status: 'present'
     });
-    const weeklyAttendance = weeklyAttRows && weeklyAttRows[0] ? weeklyAttRows[0].count : 0;
 
     // 5. Monthly Attendance (past 30 days)
-    const [monthlyAttRows] = await db.query(
-      "SELECT COUNT(*) as count FROM attendance WHERE attendance_date >= date('now', '-30 days') AND attendance_status = 'present'"
-    ).catch(async () => {
-      // Fallback for MySQL
-      return db.query("SELECT COUNT(*) as count FROM attendance WHERE attendance_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND attendance_status = 'present'");
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const monthlyAttendance = await Attendance.countDocuments({
+      attendance_date: { $gte: thirtyDaysAgo },
+      attendance_status: 'present'
     });
-    const monthlyAttendance = monthlyAttRows && monthlyAttRows[0] ? monthlyAttRows[0].count : 0;
 
-    // 6. Participation Percentage: Total Attendance / Total Reservations
-    const [totalReservationsRows] = await db.query(
-      'SELECT COUNT(*) as count FROM meal_reservations WHERE reservation_status = "confirmed"'
-    );
-    const [totalAttendanceRows] = await db.query(
-      'SELECT COUNT(*) as count FROM attendance WHERE attendance_status = "present"'
-    );
-
-    const totalResCount = totalReservationsRows ? totalReservationsRows[0].count : 0;
-    const totalAttCount = totalAttendanceRows ? totalAttendanceRows[0].count : 0;
+    // 6. Participation Percentage
+    const totalReservations = await Reservation.countDocuments();
+    const totalAttendance = await Attendance.countDocuments({ attendance_status: 'present' });
 
     let participationPercentage = 100;
-    if (totalResCount > 0) {
-      participationPercentage = Math.round((totalAttCount / totalResCount) * 100);
+    if (totalReservations > 0) {
+      participationPercentage = Math.round((totalAttendance / totalReservations) * 100);
     }
 
     res.status(200).json({
@@ -87,37 +67,38 @@ const getDashboardAnalytics = async (req, res) => {
 // GET /api/students/non-attending
 const getNonAttendingStudents = async (req, res) => {
   try {
-    // Return students who have missed meals (e.g. had a reservation but no attendance, or general low attendance)
-    // For compliance with spec, we return students alongside their missed meal count and participation percentage.
-    const [rows] = await db.query(
-      `SELECT s.id, s.name, s.roll_number, s.hostel_block, s.department, s.email, s.mobile_number,
-       (SELECT COUNT(*) FROM meal_reservations r WHERE r.student_id = s.id AND r.reservation_status = 'confirmed') as reserved_meals,
-       (SELECT COUNT(*) FROM attendance a WHERE a.student_id = s.id AND a.attendance_status = 'present') as attended_meals
-       FROM students s`
-    );
+    const students = await Student.find({ status: 'active' });
+    const nonAttending = [];
 
-    const nonAttending = rows.map(student => {
-      const reserved = student.reserved_meals || 0;
-      const attended = student.attended_meals || 0;
-      const missed = reserved > attended ? (reserved - attended) : 0;
-      
+    for (const student of students) {
+      const reservedCount = await Reservation.countDocuments({
+        $or: [{ student_id: student._id }, { roll_number: student.roll_number }]
+      });
+      const attendedCount = await Attendance.countDocuments({
+        $or: [{ student_id: student._id }, { roll_number: student.roll_number }],
+        attendance_status: 'present'
+      });
+
+      const missed = reservedCount > attendedCount ? (reservedCount - attendedCount) : 0;
       let attendancePercentage = 100;
-      if (reserved > 0) {
-        attendancePercentage = Math.round((attended / reserved) * 100);
+      if (reservedCount > 0) {
+        attendancePercentage = Math.round((attendedCount / reservedCount) * 100);
       }
 
-      return {
-        id: student.id,
-        name: student.name,
-        roll_number: student.roll_number,
-        hostel_block: student.hostel_block,
-        department: student.department,
-        email: student.email,
-        mobile_number: student.mobile_number,
-        missed_meals: missed,
-        attendance_percentage: attendancePercentage
-      };
-    }).filter(s => s.attendance_percentage < 85); // Filter for low attendance/missed meals (percentage < 85%)
+      if (attendancePercentage < 85 || missed > 0) {
+        nonAttending.push({
+          id: student._id,
+          name: student.name,
+          roll_number: student.roll_number,
+          hostel_block: student.hostel_block,
+          department: student.department,
+          email: student.email,
+          mobile_number: student.phone || '',
+          missed_meals: missed,
+          attendance_percentage: attendancePercentage
+        });
+      }
+    }
 
     res.status(200).json(nonAttending);
   } catch (error) {

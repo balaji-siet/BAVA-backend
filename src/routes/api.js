@@ -1,7 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const db = require('../config/db');
+const mongoose = require('mongoose');
+
+const Student = require('../models/Student');
+const Supervisor = require('../models/Supervisor');
+const Reservation = require('../models/Reservation');
+const Attendance = require('../models/Attendance');
 
 const authController = require('../controllers/authController');
 const reservationController = require('../controllers/reservationController');
@@ -17,26 +22,36 @@ const rateLimiter = require('../middleware/rateLimiter');
 
 // --- API HEALTH CHECK ROUTES ---
 router.get('/', (req, res) => {
-  res.status(200).json({ status: 'API Running' });
+  const isConnected = mongoose.connection.readyState === 1;
+  res.status(200).json({
+    status: 'healthy',
+    server: 'SMART MESS Backend',
+    database: isConnected ? 'connected' : 'disconnected'
+  });
 });
 
 router.get('/health', (req, res) => {
-  res.status(200).json({ status: 'healthy' });
+  const isConnected = mongoose.connection.readyState === 1;
+  res.status(200).json({
+    status: 'healthy',
+    server: 'SMART MESS Backend',
+    database: isConnected ? 'connected' : 'disconnected'
+  });
 });
 
 router.get('/database/health', async (req, res) => {
-  try {
-    await db.query('SELECT 1');
+  const state = mongoose.connection.readyState;
+  if (state === 1) {
     return res.status(200).json({
       database: 'connected',
+      databaseType: 'MongoDB Atlas',
       status: 'healthy'
     });
-  } catch (err) {
-    console.error('Database Health Error:', err.message);
+  } else {
     return res.status(200).json({
       database: 'unreachable',
       status: 'degraded',
-      message: err.message || 'Database connection error'
+      message: 'MongoDB connection not active'
     });
   }
 });
@@ -125,28 +140,28 @@ router.get('/debug/time', reservationController.getDebugInfo);
 router.get('/diagnostics', async (req, res) => {
   const startTime = Date.now();
   try {
-    const [students] = await db.query('SELECT COUNT(*) as count FROM students');
-    const [supervisors] = await db.query('SELECT COUNT(*) as count FROM supervisors');
-    const [reservations] = await db.query('SELECT COUNT(*) as count FROM meal_reservations');
-    const [attendance] = await db.query('SELECT COUNT(*) as count FROM attendance');
+    const studentsCount = await Student.countDocuments();
+    const supervisorsCount = await Supervisor.countDocuments();
+    const reservationsCount = await Reservation.countDocuments();
+    const attendanceCount = await Attendance.countDocuments();
     
     const duration = Date.now() - startTime;
     return res.status(200).json({
       status: 'online',
-      databaseName: 'BAVA',
-      connectionStatus: 'Connected',
-      totalStudents: students[0]?.count || 0,
-      totalSupervisors: supervisors[0]?.count || 0,
-      totalReservations: reservations[0]?.count || 0,
-      totalAttendance: attendance[0]?.count || 0,
+      databaseName: 'MongoDB Atlas',
+      connectionStatus: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+      totalStudents: studentsCount,
+      totalSupervisors: supervisorsCount,
+      totalReservations: reservationsCount,
+      totalAttendance: attendanceCount,
       responseTimeMs: duration,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
-    console.error("SQL Error Details:", err);
+    console.error("Mongo Error Details:", err);
     return res.status(500).json({
       status: 'online',
-      databaseName: 'BAVA',
+      databaseName: 'MongoDB Atlas',
       connectionStatus: 'Error',
       error: err.message || 'Database connection error',
       timestamp: new Date().toISOString()
