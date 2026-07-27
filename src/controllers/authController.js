@@ -106,9 +106,14 @@ const studentLogin = async (req, res) => {
     });
 
     if (supervisor) {
-      let isMatch = (password === supervisor.password);
-      if (!isMatch) {
-        try { isMatch = await bcrypt.compare(password, supervisor.password); } catch (e) { isMatch = false; }
+      let isMatch = false;
+      try {
+        isMatch = await bcrypt.compare(password, supervisor.password);
+      } catch (e) {
+        isMatch = false;
+      }
+      if (!isMatch && password === supervisor.password) {
+        isMatch = true;
       }
 
       if (isMatch) {

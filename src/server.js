@@ -12,9 +12,19 @@ const notificationService = require('./services/notificationService');
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ['http://localhost:8081', 'https://bava-smart-mess.vercel.app', 'http://localhost:19006'];
+
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS policy violation for WebSocket connection.'));
+      }
+    },
     methods: ['GET', 'POST']
   }
 });
@@ -28,10 +38,6 @@ const morgan = require('morgan');
 
 app.use(helmet());
 app.use(morgan('dev'));
-
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:8081', 'https://bava-smart-mess.vercel.app'];
 
 const corsOptions = {
   origin: (origin, callback) => {
