@@ -51,16 +51,15 @@ const studentRegister = async (req, res) => {
 
 // Register Supervisor
 const supervisorRegister = async (req, res) => {
-  console.log("Registration Request Received (Supervisor)");
+  console.log("Supervisor Registration Request Received");
   const { name, employee_id, department, mobile_number, email, password } = req.body;
 
-  const supId = employee_id || req.body.supervisor_id || req.body.roll_number || req.body.employeeId;
-  if (!name || !supId || !email || !password) {
+  if (!name || !employee_id || !email || !password) {
     return res.status(400).json({ error: 'Required fields are missing.' });
   }
 
   try {
-    const existingId = await Supervisor.findOne({ supervisor_id: supId });
+    const existingId = await Supervisor.findOne({ supervisor_id: employee_id });
     if (existingId) {
       return res.status(400).json({ error: 'Employee ID already exists' });
     }
