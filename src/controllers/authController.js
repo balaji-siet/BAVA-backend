@@ -85,7 +85,7 @@ const supervisorRegister = async (req, res) => {
     console.log("Supervisor Registered Successfully");
   } catch (error) {
     console.error("Mongo Error Details:", error);
-    res.status(500).json({ error: 'Database connection failed' });
+    res.status(500).json({ error: error.message || 'Database connection failed' });
   }
 };
 
