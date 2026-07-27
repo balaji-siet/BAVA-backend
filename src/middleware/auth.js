@@ -42,9 +42,9 @@ const verifyAdmin = (req, res, next) => {
   // Option 2: Verify signed JWT for an admin user
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
-    if (decoded.role === 'admin' || decoded.isAdmin) {
+    if (decoded.role === 'admin' || decoded.role === 'supervisor' || decoded.isAdmin) {
       req.userId = decoded.studentId || 0;
-      req.userRole = 'admin';
+      req.userRole = decoded.role || 'supervisor';
       next();
     } else {
       return res.status(403).json({ error: 'Access denied. Supervisor privileges required.' });

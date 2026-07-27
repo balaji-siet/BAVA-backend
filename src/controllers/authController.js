@@ -78,7 +78,7 @@ const supervisorRegister = async (req, res) => {
       phone: mobile_number || '',
       email,
       password: passwordHash,
-      role: 'admin'
+      role: req.body.role || 'supervisor'
     });
 
     res.status(201).json({ success: true, message: 'Supervisor registered successfully', supervisorId: supervisor._id });
@@ -116,8 +116,9 @@ const studentLogin = async (req, res) => {
       }
 
       if (isMatch) {
+        const supRole = supervisor.role || 'supervisor';
         const token = jwt.sign(
-          { studentId: supervisor._id, rollNumber: supervisor.supervisor_id, role: 'admin', name: supervisor.name },
+          { studentId: supervisor._id, rollNumber: supervisor.supervisor_id, role: supRole, name: supervisor.name },
           JWT_SECRET,
           { expiresIn: '365d' }
         );
@@ -130,7 +131,7 @@ const studentLogin = async (req, res) => {
             roll_number: supervisor.supervisor_id,
             department: 'Administration',
             email: supervisor.email,
-            role: 'admin'
+            role: supRole
           }
         });
       }
