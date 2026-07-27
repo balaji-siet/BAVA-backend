@@ -74,7 +74,7 @@ const supervisorRegister = async (req, res) => {
 
     const supervisor = await Supervisor.create({
       name,
-      supervisor_id: supId,
+      supervisor_id: employee_id,
       phone: mobile_number || '',
       email,
       password: passwordHash,
