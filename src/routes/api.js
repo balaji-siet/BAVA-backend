@@ -137,6 +137,10 @@ router.get('/attendance', verifyToken, attendanceController.getStudentAttendance
 // --- ANALYTICS MODULE ---
 router.get('/dashboard', verifyAdmin, analyticsController.getDashboardAnalytics);
 router.get('/students/non-attending', verifyAdmin, analyticsController.getNonAttendingStudents);
+router.get('/students', verifyAdmin, analyticsController.getStudentsList);
+router.get('/leaderboard', analyticsController.getLeaderboard);
+router.get('/forecast', analyticsController.getForecast);
+router.get('/forecasts', analyticsController.getForecast);
 
 // --- REPORT MODULE ---
 router.get('/reports/daily', verifyAdmin, reportController.getDailyReport);
@@ -159,6 +163,7 @@ router.get('/menu', verifyToken, menuController.getMenu);
 // --- FEEDBACK MODULE ---
 router.post('/feedback', verifyToken, feedbackController.submitFeedback);
 router.get('/feedback', verifyAdmin, feedbackController.getAllFeedback);
+router.get('/ratings/today', verifyToken, feedbackController.getTodayRatings);
 
 // --- DEBUG & TIME SIMULATION HELPERS ---
 router.get('/debug/time', reservationController.getDebugInfo);

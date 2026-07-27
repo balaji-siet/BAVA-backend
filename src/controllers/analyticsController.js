@@ -107,7 +107,73 @@ const getNonAttendingStudents = async (req, res) => {
   }
 };
 
+// GET /api/leaderboard
+const getLeaderboard = async (req, res) => {
+  try {
+    const topStudents = await Student.find({ status: 'active' })
+      .select('name roll_number department hostel_block points')
+      .sort({ points: -1 })
+      .limit(10);
+
+    res.status(200).json(topStudents);
+  } catch (error) {
+    console.error('Fetch leaderboard error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+};
+
+// GET /api/forecast or /api/forecasts
+const getForecast = async (req, res) => {
+  try {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomStr = tomorrow.toISOString().split('T')[0];
+
+    const today = new Date().toISOString().split('T')[0];
+    const reservationsToday = await Reservation.find({ reservation_date: today });
+
+    let bCount = 0;
+    let lCount = 0;
+    let dCount = 0;
+
+    reservationsToday.forEach(r => {
+      if (r.breakfast) bCount++;
+      if (r.lunch) lCount++;
+      if (r.dinner) dCount++;
+    });
+
+    const activeStudents = await Student.countDocuments({ status: 'active' });
+    const baseline = Math.max(activeStudents, 50);
+
+    const forecasts = [
+      { date: tomStr, meal_type: 'breakfast', predicted_count: Math.max(bCount, Math.round(baseline * 0.75)) },
+      { date: tomStr, meal_type: 'lunch', predicted_count: Math.max(lCount, Math.round(baseline * 0.85)) },
+      { date: tomStr, meal_type: 'dinner', predicted_count: Math.max(dCount, Math.round(baseline * 0.80)) }
+    ];
+
+    res.status(200).json(forecasts);
+  } catch (error) {
+    console.error('Fetch forecast error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+};
+
+// GET /api/students
+const getStudentsList = async (req, res) => {
+  try {
+    const students = await Student.find({ status: 'active' }).select('-password');
+    res.status(200).json(students);
+  } catch (error) {
+    console.error('Fetch students list error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+};
+
 module.exports = {
   getDashboardAnalytics,
-  getNonAttendingStudents
+  getNonAttendingStudents,
+  getLeaderboard,
+  getForecast,
+  getStudentsList
 };
+

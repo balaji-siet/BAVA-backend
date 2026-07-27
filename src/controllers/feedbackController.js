@@ -58,7 +58,28 @@ const getAllFeedback = async (req, res) => {
   }
 };
 
+// GET /api/ratings/today
+const getTodayRatings = async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const studentId = req.userId;
+
+    let filter = { date: today };
+    if (studentId) {
+      filter.student_id = studentId;
+    }
+
+    const ratings = await Feedback.find(filter);
+    res.status(200).json(ratings);
+  } catch (error) {
+    console.error('Get today ratings error:', error);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+};
+
 module.exports = {
   submitFeedback,
-  getAllFeedback
+  getAllFeedback,
+  getTodayRatings
 };
+
