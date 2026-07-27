@@ -51,10 +51,10 @@ const studentRegister = async (req, res) => {
 
 // Register Supervisor
 const supervisorRegister = async (req, res) => {
-  console.log("Registration Request Received");
+  console.log("Registration Request Received (Supervisor)");
   const { name, employee_id, department, mobile_number, email, password } = req.body;
 
-  const supId = employee_id || req.body.supervisor_id;
+  const supId = employee_id || req.body.supervisor_id || req.body.roll_number || req.body.employeeId;
   if (!name || !supId || !email || !password) {
     return res.status(400).json({ error: 'Required fields are missing.' });
   }

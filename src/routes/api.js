@@ -108,7 +108,8 @@ router.post('/supervisor/login', rateLimiter(15, 15 * 60 * 1000), authController
 
 // Auth Aliases for client compatibility
 router.post('/register', rateLimiter(10, 15 * 60 * 1000), (req, res, next) => {
-  if (req.body.role === 'admin' || req.body.role === 'supervisor') {
+  const role = (req.body.role || '').toLowerCase();
+  if (role === 'admin' || role === 'supervisor' || req.body.employee_id || req.body.supervisor_id || req.body.employeeId) {
     return authController.supervisorRegister(req, res, next);
   }
   return authController.studentRegister(req, res, next);
