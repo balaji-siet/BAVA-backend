@@ -38,7 +38,8 @@ function isWindowOpen(mealType, dateStr, bypass = false) {
 // Create or update meal reservations
 const saveReservations = async (req, res) => {
   const studentId = req.userId;
-  const { date, breakfast, lunch, dinner } = req.body;
+  const date = req.body.date || req.body.reservation_date || new Date().toISOString().split('T')[0];
+  const { breakfast, lunch, dinner, meal_type } = req.body;
   const bypass = req.headers['x-bypass-windows'] === process.env.ADMIN_SECRET || process.env.DEBUG_BYPASS === 'true';
 
   if (!date) {
@@ -73,6 +74,9 @@ const saveReservations = async (req, res) => {
     if (breakfast !== undefined) reservationDoc.breakfast = Boolean(breakfast);
     if (lunch !== undefined) reservationDoc.lunch = Boolean(lunch);
     if (dinner !== undefined) reservationDoc.dinner = Boolean(dinner);
+    if (meal_type === 'breakfast') reservationDoc.breakfast = true;
+    if (meal_type === 'lunch') reservationDoc.lunch = true;
+    if (meal_type === 'dinner') reservationDoc.dinner = true;
 
     await reservationDoc.save();
 

@@ -20,7 +20,10 @@ const verifyToken = (req, res, next) => {
     req.userRole = decoded.role || 'student';
     next();
   } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired token.' });
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'JWT expired. Please login again.' });
+    }
+    return res.status(401).json({ error: 'Invalid token. Please login again.' });
   }
 };
 
@@ -50,7 +53,10 @@ const verifyAdmin = (req, res, next) => {
       return res.status(403).json({ error: 'Access denied. Supervisor privileges required.' });
     }
   } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired credentials.' });
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'JWT expired. Please login again.' });
+    }
+    return res.status(401).json({ error: 'Invalid token. Please login again.' });
   }
 };
 

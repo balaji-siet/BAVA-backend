@@ -18,6 +18,7 @@ const reportController = require('../controllers/reportController');
 const notificationController = require('../controllers/notificationController');
 const menuController = require('../controllers/menuController');
 const feedbackController = require('../controllers/feedbackController');
+const mealSettingsController = require('../controllers/mealSettingsController');
 
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const rateLimiter = require('../middleware/rateLimiter');
@@ -127,6 +128,14 @@ router.post('/reserve-meal', verifyToken, reservationController.saveReservations
 router.post('/cancel-reservation', verifyToken, reservationController.cancelReservation);
 router.get('/reservations/today', verifyToken, reservationController.getReservationsByDate);
 
+// --- DYNAMIC MEAL SETTINGS & SMS MODULE ---
+router.get('/meal-settings/today', verifyToken, mealSettingsController.getTodaySettings);
+router.get('/meal-settings/:date', verifyToken, mealSettingsController.getSettingsByDate);
+router.post('/meal-settings', verifyAdmin, mealSettingsController.saveSettings);
+router.post('/meal-settings/copy-tomorrow', verifyAdmin, mealSettingsController.copyTodayToTomorrow);
+router.post('/meal-settings/reset-default', verifyAdmin, mealSettingsController.resetToDefault);
+router.get('/sms/logs', verifyAdmin, mealSettingsController.getSMSLogs);
+
 // --- ATTENDANCE MODULE ---
 router.post('/attendance/mark', verifyToken, attendanceController.markAttendance);
 router.get('/attendance/student', verifyToken, attendanceController.getStudentAttendance);
@@ -155,14 +164,20 @@ router.get('/reports', verifyAdmin, reportController.getDailyReport);
 router.post('/notifications/create', verifyAdmin, notificationController.createNotification);
 router.get('/notifications', verifyToken, notificationController.getNotifications);
 
-// --- MENU MANAGEMENT ---
+// --- MENU MANAGEMENT MODULE ---
+router.get('/menu/today', verifyToken, menuController.getTodayMenu);
+router.get('/menu/search', verifyToken, menuController.searchMenu);
+router.get('/menu/date/:date', verifyToken, menuController.getMenuByDate);
+router.post('/menu', verifyAdmin, menuController.saveDailyMenu);
+router.post('/menu/duplicate-yesterday', verifyAdmin, menuController.duplicateYesterday);
 router.post('/menu/create', verifyAdmin, menuController.createMenu);
 router.put('/menu/update', verifyAdmin, menuController.updateMenu);
 router.delete('/menu/delete', verifyAdmin, menuController.deleteMenu);
-router.get('/menu', verifyToken, menuController.getMenu);
+router.get('/menu', verifyToken, menuController.getTodayMenu);
 
 // --- FEEDBACK MODULE ---
 router.post('/feedback', verifyToken, feedbackController.submitFeedback);
+router.post('/feedback/submit', verifyToken, feedbackController.submitFeedback);
 router.get('/feedback', verifyAdmin, feedbackController.getAllFeedback);
 router.get('/ratings/today', verifyToken, feedbackController.getTodayRatings);
 

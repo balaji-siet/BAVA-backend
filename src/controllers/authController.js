@@ -252,9 +252,9 @@ const getMe = async (req, res) => {
           id: supervisor._id,
           name: supervisor.name,
           roll_number: supervisor.supervisor_id,
-          department: 'Administration',
+          department: supervisor.department || 'Administration',
           email: supervisor.email,
-          role: 'admin'
+          role: supervisor.role || 'supervisor'
         });
       }
       return res.status(404).json({ error: 'User not found' });

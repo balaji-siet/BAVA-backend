@@ -3,10 +3,14 @@ const Student = require('../models/Student');
 
 // POST /api/attendance/mark
 const markAttendance = async (req, res) => {
-  const { student_id, roll_number, meal_type, attendance_date, attendance_status, verification_method } = req.body;
+  const student_id = req.body.student_id || req.userId;
+  const roll_number = req.body.roll_number || req.userRoll;
+  const meal_type = req.body.meal_type;
+  const attendance_date = req.body.attendance_date || req.body.date || new Date().toISOString().split('T')[0];
+  const { attendance_status, verification_method } = req.body;
 
-  if ((!student_id && !roll_number) || !meal_type || !attendance_date) {
-    return res.status(400).json({ error: 'Student ID / Roll Number, Meal Type, and Date are required.' });
+  if (!meal_type) {
+    return res.status(400).json({ error: 'Meal Type is required.' });
   }
 
   try {

@@ -19,7 +19,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      if (!origin || (origin && origin.match(/^https?:\/\/localhost(:\d+)?$/)) || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
         callback(null, true);
       } else {
         callback(new Error('CORS policy violation for WebSocket connection.'));
@@ -41,11 +41,23 @@ app.use(morgan('dev'));
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      callback(new Error('CORS policy: Access denied for this origin.'));
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
     }
+    // Allow all localhost origins (any port) for development
+    if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
+      return callback(null, true);
+    }
+    // Allow configured origins
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    // In non-production, allow everything
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    callback(new Error('CORS policy: Access denied for this origin.'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Bypass-Tunnel-Reminder', 'x-bypass-windows'],
@@ -109,6 +121,12 @@ app.use((err, req, res, next) => {
 });
 
 notificationService.initializeSchedules();
+
+// Periodic 60-second check for dynamic meal reservation cut-offs and automatic SMS dispatches
+const { checkCutoffsAndSendSMS } = require('./controllers/mealSettingsController');
+setInterval(() => {
+  checkCutoffsAndSendSMS();
+}, 60000);
 
 io.on('connection', (socket) => {
   console.log(`WebSocket client connected: ${socket.id}`);
