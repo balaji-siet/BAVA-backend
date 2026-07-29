@@ -244,8 +244,8 @@ const supervisorLogin = async (req, res) => {
 
 const getMe = async (req, res) => {
   try {
-    const student = await Student.findById(req.userId);
-    if (!student) {
+    const isSupRole = req.userRole === 'supervisor' || req.userRole === 'admin';
+    if (isSupRole) {
       const supervisor = await Supervisor.findById(req.userId);
       if (supervisor) {
         return res.status(200).json({
@@ -257,17 +257,33 @@ const getMe = async (req, res) => {
           role: supervisor.role || 'supervisor'
         });
       }
-      return res.status(404).json({ error: 'User not found' });
     }
 
-    res.status(200).json({
-      id: student._id,
-      name: student.name,
-      roll_number: student.roll_number,
-      department: student.department,
-      email: student.email,
-      role: 'student'
-    });
+    const student = await Student.findById(req.userId);
+    if (student) {
+      return res.status(200).json({
+        id: student._id,
+        name: student.name,
+        roll_number: student.roll_number,
+        department: student.department,
+        email: student.email,
+        role: 'student'
+      });
+    }
+
+    const supervisorFallback = await Supervisor.findById(req.userId);
+    if (supervisorFallback) {
+      return res.status(200).json({
+        id: supervisorFallback._id,
+        name: supervisorFallback.name,
+        roll_number: supervisorFallback.supervisor_id,
+        department: supervisorFallback.department || 'Administration',
+        email: supervisorFallback.email,
+        role: supervisorFallback.role || 'supervisor'
+      });
+    }
+
+    return res.status(404).json({ error: 'User not found' });
   } catch (error) {
     console.error('Get me error:', error);
     res.status(500).json({ error: 'Database connection failed' });
