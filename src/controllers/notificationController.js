@@ -33,7 +33,8 @@ const createNotification = async (req, res) => {
 // GET /api/notifications
 const getNotifications = async (req, res) => {
   const role = req.userRole || 'student';
-  const target = role === 'admin' ? 'supervisors' : 'students';
+  const isSupervisorRole = role === 'admin' || role === 'supervisor';
+  const target = isSupervisorRole ? 'supervisors' : 'students';
 
   try {
     const list = await Notification.find({
