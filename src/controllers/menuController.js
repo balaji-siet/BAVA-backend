@@ -23,15 +23,19 @@ const getTodayMenu = async (req, res) => {
     let menuDoc = await Menu.findOne({ date: todayStr });
 
     if (!menuDoc) {
-      menuDoc = new Menu({
-        date: todayStr,
-        breakfast: DEFAULT_MENU_ITEMS.breakfast,
-        lunch: DEFAULT_MENU_ITEMS.lunch,
-        dinner: DEFAULT_MENU_ITEMS.dinner,
-        is_published: true,
-        updatedBy: 'System Default'
-      });
-      await menuDoc.save();
+      try {
+        menuDoc = new Menu({
+          date: todayStr,
+          breakfast: DEFAULT_MENU_ITEMS.breakfast,
+          lunch: DEFAULT_MENU_ITEMS.lunch,
+          dinner: DEFAULT_MENU_ITEMS.dinner,
+          is_published: true,
+          updatedBy: 'System Default'
+        });
+        await menuDoc.save();
+      } catch (saveErr) {
+        menuDoc = await Menu.findOne({ date: todayStr });
+      }
     }
 
     res.status(200).json({ success: true, menu: menuDoc });
@@ -48,15 +52,19 @@ const getMenuByDate = async (req, res) => {
     let menuDoc = await Menu.findOne({ date: targetDate });
 
     if (!menuDoc) {
-      menuDoc = new Menu({
-        date: targetDate,
-        breakfast: DEFAULT_MENU_ITEMS.breakfast,
-        lunch: DEFAULT_MENU_ITEMS.lunch,
-        dinner: DEFAULT_MENU_ITEMS.dinner,
-        is_published: true,
-        updatedBy: 'System Default'
-      });
-      await menuDoc.save();
+      try {
+        menuDoc = new Menu({
+          date: targetDate,
+          breakfast: DEFAULT_MENU_ITEMS.breakfast,
+          lunch: DEFAULT_MENU_ITEMS.lunch,
+          dinner: DEFAULT_MENU_ITEMS.dinner,
+          is_published: true,
+          updatedBy: 'System Default'
+        });
+        await menuDoc.save();
+      } catch (saveErr) {
+        menuDoc = await Menu.findOne({ date: targetDate });
+      }
     }
 
     res.status(200).json({ success: true, menu: menuDoc });
