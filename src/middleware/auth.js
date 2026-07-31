@@ -17,7 +17,7 @@ const verifyToken = (req, res, next) => {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     req.userId = decoded.studentId;
     req.userRoll = decoded.rollNumber;
-    req.userRole = decoded.role || 'student';
+    req.userRole = (decoded.role || 'student').toString().toLowerCase().trim();
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
@@ -42,12 +42,13 @@ const verifyAdmin = (req, res, next) => {
     return next();
   }
 
-  // Option 2: Verify signed JWT for an admin user
+  // Option 2: Verify signed JWT for an admin/supervisor user
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
-    if (decoded.role === 'admin' || decoded.role === 'supervisor' || decoded.isAdmin) {
+    const normRole = (decoded.role || '').toString().toLowerCase().trim();
+    if (normRole === 'admin' || normRole === 'supervisor' || normRole === 'manager' || decoded.isAdmin) {
       req.userId = decoded.studentId || 0;
-      req.userRole = decoded.role || 'supervisor';
+      req.userRole = normRole || 'supervisor';
       next();
     } else {
       return res.status(403).json({ error: 'Access denied. Supervisor privileges required.' });

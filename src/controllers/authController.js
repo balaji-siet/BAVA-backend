@@ -244,7 +244,9 @@ const supervisorLogin = async (req, res) => {
 
 const getMe = async (req, res) => {
   try {
-    const isSupRole = req.userRole === 'supervisor' || req.userRole === 'admin';
+    const normRole = (req.userRole || '').toString().toLowerCase().trim();
+    const isSupRole = normRole === 'supervisor' || normRole === 'admin' || normRole === 'manager';
+    
     if (isSupRole) {
       const supervisor = await Supervisor.findById(req.userId);
       if (supervisor) {
