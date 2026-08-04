@@ -153,7 +153,7 @@ io.on('connection', (socket) => {
 (async () => {
   await connectMongoDB();
 
-  server.listen(PORT, '0.0.0.0', () => {
+  const httpServer = server.listen(PORT, '0.0.0.0', () => {
     console.log(`============================================================`);
     console.log(`SRI Shakthi Smart Mess server is running on port ${PORT}`);
     console.log(`Bound to host: 0.0.0.0`);
@@ -161,4 +161,29 @@ io.on('connection', (socket) => {
     console.log(`API base URL: http://0.0.0.0:${PORT}/api`);
     console.log(`============================================================`);
   });
+
+  // Graceful shutdown handling for Render deployments
+  const gracefulShutdown = async (signal) => {
+    console.log(`\n[SHUTDOWN] Received ${signal}. Starting graceful shutdown...`);
+    httpServer.close(async () => {
+      console.log('[SHUTDOWN] HTTP server closed.');
+      try {
+        await mongoose.connection.close(false);
+        console.log('[SHUTDOWN] MongoDB connection closed.');
+        process.exit(0);
+      } catch (err) {
+        console.error('[SHUTDOWN ERROR] Error closing MongoDB:', err);
+        process.exit(1);
+      }
+    });
+
+    // Force close after 10s if graceful shutdown hangs
+    setTimeout(() => {
+      console.error('[SHUTDOWN FORCE] Forcing process exit after 10s timeout.');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 })();
