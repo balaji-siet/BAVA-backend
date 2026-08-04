@@ -35,7 +35,9 @@ const PORT = process.env.PORT || 5000;
 
 const helmet = require('helmet');
 const morgan = require('morgan');
+const compression = require('compression');
 
+app.use(compression());
 app.use(helmet());
 app.use(morgan('dev'));
 
@@ -127,6 +129,18 @@ const { checkCutoffsAndSendSMS } = require('./controllers/mealSettingsController
 setInterval(() => {
   checkCutoffsAndSendSMS();
 }, 60000);
+
+// Self-ping every 14 minutes to prevent Render free-tier cold starts
+if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+  const https = require('https');
+  setInterval(() => {
+    https.get('https://bava-backend.onrender.com/health', (res) => {
+      console.log(`[KEEPALIVE PING] Status: ${res.statusCode}`);
+    }).on('error', (err) => {
+      console.warn(`[KEEPALIVE PING FAILED]:`, err.message);
+    });
+  }, 14 * 60 * 1000); // 14 minutes
+}
 
 io.on('connection', (socket) => {
   console.log(`WebSocket client connected: ${socket.id}`);
