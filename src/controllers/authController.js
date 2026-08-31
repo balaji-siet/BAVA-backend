@@ -1,4 +1,4 @@
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const Student = require('../models/Student');
 const Supervisor = require('../models/Supervisor');
@@ -44,6 +44,10 @@ const studentRegister = async (req, res) => {
     res.status(201).json({ success: true, message: 'Student registered successfully', studentId: student._id });
     console.log("Student Registered Successfully");
   } catch (error) {
+    if (error.code === 11000) {
+      const keyName = Object.keys(error.keyPattern || {})[0] || 'Roll Number/Email';
+      return res.status(400).json({ error: `${keyName} already exists` });
+    }
     console.error("Mongo Error Details:", error);
     res.status(500).json({ error: error.message || 'Database error during registration' });
   }
@@ -84,6 +88,10 @@ const supervisorRegister = async (req, res) => {
     res.status(201).json({ success: true, message: 'Supervisor registered successfully', supervisorId: supervisor._id });
     console.log("Supervisor Registered Successfully");
   } catch (error) {
+    if (error.code === 11000) {
+      const keyName = Object.keys(error.keyPattern || {})[0] || 'Employee ID/Email';
+      return res.status(400).json({ error: `${keyName} already exists` });
+    }
     console.error("Mongo Error Details:", error);
     res.status(500).json({ error: error.message || 'Database connection failed' });
   }
@@ -99,7 +107,45 @@ const studentLogin = async (req, res) => {
   }
 
   try {
-    // 1. First check supervisor collection
+    // 1. Check student collection first
+    const student = await Student.findOne({
+      $or: [{ email: identifier }, { roll_number: identifier }]
+    });
+
+    if (student) {
+      let isMatch = false;
+      try {
+        isMatch = await bcrypt.compare(password, student.password);
+      } catch (e) {
+        isMatch = false;
+      }
+
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Invalid password' });
+      }
+
+      const token = jwt.sign(
+        { studentId: student._id, rollNumber: student.roll_number, role: 'student', name: student.name },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      console.log("Login Successful (Student)");
+
+      return res.status(200).json({
+        token,
+        user: {
+          id: student._id,
+          name: student.name,
+          roll_number: student.roll_number,
+          department: student.department,
+          email: student.email,
+          role: 'student'
+        }
+      });
+    }
+
+    // 2. Fallback check supervisor collection if student not found
     const supervisor = await Supervisor.findOne({
       $or: [{ supervisor_id: identifier }, { email: identifier }]
     });
@@ -111,10 +157,6 @@ const studentLogin = async (req, res) => {
       } catch (e) {
         isMatch = false;
       }
-      if (!isMatch && password === supervisor.password) {
-        isMatch = true;
-      }
-
       if (isMatch) {
         const supRole = supervisor.role || 'supervisor';
         const token = jwt.sign(
@@ -137,49 +179,7 @@ const studentLogin = async (req, res) => {
       }
     }
 
-    // 2. Check student collection
-    const student = await Student.findOne({
-      $or: [{ email: identifier }, { roll_number: identifier }]
-    });
-
-    if (!student) {
-      return res.status(400).json({ error: 'Invalid email or password' });
-    }
-
-    let isMatch = false;
-    try {
-      isMatch = await bcrypt.compare(password, student.password);
-    } catch (e) {
-      isMatch = false;
-    }
-
-    if (!isMatch && password === student.password) {
-      isMatch = true;
-    }
-
-    if (!isMatch) {
-      return res.status(400).json({ error: 'Invalid password' });
-    }
-
-    const token = jwt.sign(
-      { studentId: student._id, rollNumber: student.roll_number, role: 'student', name: student.name },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    console.log("Login Successful (Student)");
-
-    res.status(200).json({
-      token,
-      user: {
-        id: student._id,
-        name: student.name,
-        roll_number: student.roll_number,
-        department: student.department,
-        email: student.email,
-        role: 'student'
-      }
-    });
+    return res.status(400).json({ error: 'Invalid email or password' });
   } catch (error) {
     console.error("Mongo Error Details:", error);
     res.status(500).json({ error: 'Database connection failed' });
@@ -204,13 +204,11 @@ const supervisorLogin = async (req, res) => {
       return res.status(400).json({ error: 'Invalid username/email or password' });
     }
 
-    let isMatch = (password === supervisor.password);
-    if (!isMatch) {
-      try {
-        isMatch = await bcrypt.compare(password, supervisor.password);
-      } catch (e) {
-        isMatch = false;
-      }
+    let isMatch = false;
+    try {
+      isMatch = await bcrypt.compare(password, supervisor.password);
+    } catch (e) {
+      isMatch = false;
     }
 
     if (!isMatch) {
