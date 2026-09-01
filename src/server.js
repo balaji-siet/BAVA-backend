@@ -1,4 +1,28 @@
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
 require('dotenv').config();
+
+const cluster = require('cluster');
+const os = require('os');
+
+if (process.env.USE_CLUSTER === 'true') {
+  if (cluster.isPrimary || cluster.isMaster) {
+    const numWorkers = parseInt(process.env.WORKER_COUNT || '2', 10);
+    console.log(`============================================================`);
+    console.log(`SRI SHAKTHI SMART MESS — MULTI-PROCESS CLUSTER MASTER (${process.pid})`);
+    console.log(`CPU Cores Available: ${os.cpus().length} | Forking ${numWorkers} Optimal Workers...`);
+    console.log(`============================================================`);
+
+    for (let i = 0; i < numWorkers; i++) {
+      cluster.fork();
+    }
+
+    cluster.on('exit', (worker, code, signal) => {
+      console.log(`[CLUSTER] Worker ${worker.process.pid} exited (code: ${code}, signal: ${signal}). Respawning...`);
+      cluster.fork();
+    });
+    return;
+  }
+}
 
 const express = require('express');
 const cors = require('cors');
@@ -39,7 +63,9 @@ const compression = require('compression');
 
 app.use(compression());
 app.use(helmet());
-app.use(morgan('dev'));
+if (process.env.ENABLE_MORGAN === 'true') {
+  app.use(morgan('dev'));
+}
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -161,6 +187,9 @@ io.on('connection', (socket) => {
     console.log(`API base URL: http://0.0.0.0:${PORT}/api`);
     console.log(`============================================================`);
   });
+
+  httpServer.keepAliveTimeout = 65000;
+  httpServer.headersTimeout = 66000;
 
   // Graceful shutdown handling for Render deployments
   const gracefulShutdown = async (signal) => {

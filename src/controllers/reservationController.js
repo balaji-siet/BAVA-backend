@@ -40,18 +40,18 @@ const saveReservations = async (req, res) => {
   const studentId = req.userId;
   const date = req.body.date || req.body.reservation_date || new Date().toISOString().split('T')[0];
   const { breakfast, lunch, dinner, meal_type } = req.body;
-  const bypass = req.headers['x-bypass-windows'] === process.env.ADMIN_SECRET || process.env.DEBUG_BYPASS === 'true';
 
   if (!date) {
     return res.status(400).json({ error: 'Date is required' });
   }
 
   try {
-    let student = null;
-    if (studentId) {
-      student = await Student.findById(studentId);
+    let rollNumber = req.userRoll || req.body.roll_number;
+    if (!rollNumber && studentId) {
+      const student = await Student.findById(studentId).select('roll_number').lean();
+      rollNumber = student ? student.roll_number : 'UNKNOWN';
     }
-    const rollNumber = student ? student.roll_number : (req.body.roll_number || 'UNKNOWN');
+    rollNumber = rollNumber || 'UNKNOWN';
 
     let reservationDoc = await Reservation.findOne({
       $or: [
@@ -83,6 +83,17 @@ const saveReservations = async (req, res) => {
     res.status(200).json({ message: 'Reservations saved successfully', reservation: reservationDoc });
     console.log("Reservation Saved");
   } catch (error) {
+    if (error.code === 11000) {
+      try {
+        const rollNumber = req.userRoll || req.body.roll_number;
+        const fallbackDoc = await Reservation.findOneAndUpdate(
+          { roll_number: rollNumber, reservation_date: date },
+          { $set: { breakfast: Boolean(breakfast), lunch: Boolean(lunch), dinner: Boolean(dinner) } },
+          { new: true }
+        );
+        return res.status(200).json({ message: 'Reservations saved successfully', reservation: fallbackDoc });
+      } catch (fallbackErr) {}
+    }
     console.error("Mongo Error Details:", error);
     res.status(500).json({ error: 'Database error saving reservation' });
   }
@@ -98,11 +109,11 @@ const cancelReservation = async (req, res) => {
   }
 
   try {
-    let student = null;
-    if (studentId) {
-      student = await Student.findById(studentId);
+    let rollNumber = req.userRoll || req.body.roll_number;
+    if (!rollNumber && studentId) {
+      const student = await Student.findById(studentId).select('roll_number').lean();
+      rollNumber = student ? student.roll_number : req.body.roll_number;
     }
-    const rollNumber = student ? student.roll_number : req.body.roll_number;
 
     let reservationDoc = await Reservation.findOne({
       $or: [
@@ -137,18 +148,18 @@ const getReservationsByDate = async (req, res) => {
   const date = req.query.date || getCurrentTime().toISOString().split('T')[0];
 
   try {
-    let student = null;
-    if (studentId) {
-      student = await Student.findById(studentId);
+    let rollNumber = req.userRoll || req.query.roll_number;
+    if (!rollNumber && studentId) {
+      const student = await Student.findById(studentId).select('roll_number').lean();
+      rollNumber = student ? student.roll_number : req.query.roll_number;
     }
-    const rollNumber = student ? student.roll_number : req.query.roll_number;
 
     const reservationDoc = await Reservation.findOne({
       $or: [
         { student_id: studentId, reservation_date: date },
         { roll_number: rollNumber, reservation_date: date }
       ]
-    });
+    }).lean();
 
     const reservations = {
       breakfast: reservationDoc ? reservationDoc.breakfast : false,
@@ -180,18 +191,19 @@ const getReservationsHistory = async (req, res) => {
   const studentId = req.userId;
 
   try {
-    let student = null;
-    if (studentId) {
-      student = await Student.findById(studentId);
+    let rollNumber = req.userRoll || req.query.roll_number;
+    if (!rollNumber && studentId) {
+      const student = await Student.findById(studentId).select('roll_number').lean();
+      rollNumber = student ? student.roll_number : req.query.roll_number;
     }
-    const rollNumber = student ? student.roll_number : req.query.roll_number;
 
-    const reservations = await Reservation.find({
-      $or: [
-        { student_id: studentId },
-        { roll_number: rollNumber }
-      ]
-    }).sort({ reservation_date: -1 });
+    const queryConditions = [];
+    if (studentId) queryConditions.push({ student_id: studentId });
+    if (rollNumber) queryConditions.push({ roll_number: rollNumber });
+
+    const query = queryConditions.length > 0 ? { $or: queryConditions } : {};
+
+    const reservations = await Reservation.find(query).sort({ reservation_date: -1 }).lean();
 
     res.status(200).json(reservations);
   } catch (error) {

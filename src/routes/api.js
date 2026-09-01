@@ -19,6 +19,7 @@ const notificationController = require('../controllers/notificationController');
 const menuController = require('../controllers/menuController');
 const feedbackController = require('../controllers/feedbackController');
 const mealSettingsController = require('../controllers/mealSettingsController');
+const nfcController = require('../controllers/nfcController');
 
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 const rateLimiter = require('../middleware/rateLimiter');
@@ -140,6 +141,52 @@ router.get('/sms/logs', verifyAdmin, mealSettingsController.getSMSLogs);
 router.post('/attendance/mark', verifyToken, attendanceController.markAttendance);
 router.get('/attendance/student', verifyToken, attendanceController.getStudentAttendance);
 router.get('/attendance/all', verifyAdmin, attendanceController.getAllAttendance);
+router.get('/attendance/today', nfcController.getTodayNfcAttendance);
+router.get('/attendance/history', async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const startDate = start || '2026-05-01';
+    const endDate = end || new Date().toISOString().split('T')[0];
+    
+    const attendance = await Attendance.aggregate([
+      { $match: { attendance_date: { $gte: startDate, $lte: endDate }, attendance_status: 'present' } },
+      { 
+        $group: { 
+          _id: { date: '$attendance_date', meal: '$meal_type' }, 
+          count: { $sum: 1 } 
+        } 
+      }
+    ]);
+    
+    const map = {};
+    attendance.forEach(item => {
+      const d = item._id.date;
+      if (!map[d]) {
+        map[d] = { date: d, breakfast_count: 0, lunch_count: 0, dinner_count: 0 };
+      }
+      if (item._id.meal === 'breakfast') map[d].breakfast_count = item.count;
+      if (item._id.meal === 'lunch') map[d].lunch_count = item.count;
+      if (item._id.meal === 'dinner') map[d].dinner_count = item.count;
+    });
+    
+    const sorted = Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
+    res.status(200).json(sorted);
+  } catch (err) {
+    console.error('Attendance history error:', err);
+    res.status(500).json({ error: 'Failed to fetch attendance history' });
+  }
+});
+
+// NFC Hardware & Dashboard Endpoints
+router.post('/nfc/scan', nfcController.scanNfc);
+router.get('/nfc/attendance/today', nfcController.getTodayNfcAttendance);
+router.get('/nfc/non-attending', nfcController.getNonAttendingStudents);
+router.get('/nfc/reports', nfcController.getAttendanceReports);
+router.get('/nfc/reports/export', nfcController.exportReport);
+router.get('/nfc/waste-analytics', nfcController.getWasteAnalytics);
+router.get('/nfc/dashboard-analytics', nfcController.getDashboardAnalytics);
+router.get('/nfc/attendance/me', verifyToken, nfcController.getStudentAttendance);
+router.get('/nfc/attendance/student/:rollNumber', verifyAdmin, nfcController.getStudentAttendanceByRollNumber);
 
 // Attendance Aliases for client compatibility
 router.get('/attendance', verifyToken, attendanceController.getStudentAttendance);
@@ -183,26 +230,60 @@ router.get('/ratings/today', verifyToken, feedbackController.getTodayRatings);
 
 // --- DEBUG & TIME SIMULATION HELPERS ---
 router.get('/debug/time', reservationController.getDebugInfo);
+router.post('/debug/trigger-notification', async (req, res) => {
+  try {
+    const { mealType, date, time, phoneNumber } = req.body || {};
+    const targetMeal = mealType || 'lunch';
+    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetPhone = phoneNumber || '8015667502';
+    
+    const count = await Reservation.countDocuments({
+      reservation_date: targetDate,
+      [targetMeal]: true
+    });
+    
+    const smsLog = `Sri Shakthi Smart Mess final ${targetMeal.toUpperCase()} report for ${targetDate}: ${count} student(s) confirmed. Cutoff closed at ${time || '10:00 PM'}. SMS dispatched to ${targetPhone}.`;
+    console.log(`[SMS DISPATCH] ${smsLog}`);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Notification triggered successfully',
+      count,
+      log: smsLog
+    });
+  } catch (err) {
+    console.error('Trigger notification error:', err);
+    res.status(500).json({ error: 'Failed to trigger notification' });
+  }
+});
 
 router.get('/diagnostics', async (req, res) => {
   const startTime = Date.now();
   const errorReason = getMongoError();
   try {
-    const studentsCount = await Student.countDocuments();
-    const supervisorsCount = await Supervisor.countDocuments();
-    const reservationsCount = await Reservation.countDocuments();
-    const attendanceCount = await Attendance.countDocuments();
+    const [studentsCount, supervisorsCount, reservationsCount, attendanceCount] = await Promise.all([
+      Student.estimatedDocumentCount(),
+      Supervisor.estimatedDocumentCount(),
+      Reservation.estimatedDocumentCount(),
+      Attendance.estimatedDocumentCount()
+    ]);
     
+    const { getMongoStats } = require('../config/mongodb');
+    const dbStats = await getMongoStats();
+
     const duration = Date.now() - startTime;
     return res.status(200).json({
       status: 'online',
-      databaseName: 'MongoDB Atlas',
+      databaseName: 'smartmess_test',
       connectionStatus: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
       errorReason: errorReason || null,
       totalStudents: studentsCount,
       totalSupervisors: supervisorsCount,
       totalReservations: reservationsCount,
       totalAttendance: attendanceCount,
+      mongoStats: dbStats,
+      maxPoolSizeConfig: parseInt(process.env.MONGO_MAX_POOL_SIZE || '50', 10),
+      workerCountConfig: parseInt(process.env.WORKER_COUNT || '1', 10),
       responseTimeMs: duration,
       timestamp: new Date().toISOString()
     });

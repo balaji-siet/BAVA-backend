@@ -16,15 +16,29 @@ function getYesterdayStr() {
   return d.toISOString().split('T')[0];
 }
 
+let cachedTodayMenuDoc = null;
+let cachedTodayMenuTime = 0;
+
+function invalidateMenuCache() {
+  cachedTodayMenuDoc = null;
+  cachedTodayMenuTime = 0;
+}
+
 // GET /api/menu/today
 const getTodayMenu = async (req, res) => {
   try {
     const todayStr = getTodayStr();
-    let menuDoc = await Menu.findOne({ date: todayStr });
+    const now = Date.now();
+
+    if (cachedTodayMenuDoc && cachedTodayMenuDoc.date === todayStr && (now - cachedTodayMenuTime < 10000)) {
+      return res.status(200).json({ success: true, menu: cachedTodayMenuDoc });
+    }
+
+    let menuDoc = await Menu.findOne({ date: todayStr }).lean();
 
     if (!menuDoc) {
       try {
-        menuDoc = new Menu({
+        const newDoc = new Menu({
           date: todayStr,
           breakfast: DEFAULT_MENU_ITEMS.breakfast,
           lunch: DEFAULT_MENU_ITEMS.lunch,
@@ -32,10 +46,15 @@ const getTodayMenu = async (req, res) => {
           is_published: true,
           updatedBy: 'System Default'
         });
-        await menuDoc.save();
+        menuDoc = (await newDoc.save()).toObject();
       } catch (saveErr) {
-        menuDoc = await Menu.findOne({ date: todayStr });
+        menuDoc = await Menu.findOne({ date: todayStr }).lean();
       }
+    }
+
+    if (menuDoc) {
+      cachedTodayMenuDoc = menuDoc;
+      cachedTodayMenuTime = Date.now();
     }
 
     res.status(200).json({ success: true, menu: menuDoc });
@@ -129,6 +148,7 @@ const saveDailyMenu = async (req, res) => {
     menuDoc.updatedBy = req.userRoll || 'Supervisor';
 
     await menuDoc.save();
+    invalidateMenuCache();
 
     res.status(200).json({
       message: 'Daily menu saved successfully',

@@ -19,25 +19,46 @@ function getTomorrowDateString() {
   return tomorrow.toISOString().split('T')[0];
 }
 
+let cachedTodaySettingsData = null;
+let cachedTodaySettingsTime = 0;
+
+function invalidateSettingsCache() {
+  cachedTodaySettingsData = null;
+  cachedTodaySettingsTime = 0;
+}
+
 // GET /api/meal-settings/today
 const getTodaySettings = async (req, res) => {
   try {
     const todayStr = getTodayDateString();
-    let settings = await MealSettings.findOne({ date: todayStr });
+    const now = Date.now();
+
+    if (cachedTodaySettingsData && cachedTodaySettingsData.date === todayStr && (now - cachedTodaySettingsTime < 10000)) {
+      return res.status(200).json({
+        settings: cachedTodaySettingsData.settings,
+        reservationCounts: cachedTodaySettingsData.reservationCounts,
+        currentTime: new Date().toLocaleTimeString('en-US', { hour12: false })
+      });
+    }
+
+    let settings = await MealSettings.findOne({ date: todayStr }).lean();
 
     if (!settings) {
-      settings = new MealSettings({
+      const newSettings = new MealSettings({
         date: todayStr,
         breakfast: DEFAULT_TIMINGS.breakfast,
         lunch: DEFAULT_TIMINGS.lunch,
         dinner: DEFAULT_TIMINGS.dinner,
         updatedBy: 'System Default'
       });
-      await settings.save();
+      settings = (await newSettings.save()).toObject();
     }
 
     // Get live reservation counts for today
     const counts = await getReservationCountsForDate(todayStr);
+
+    cachedTodaySettingsData = { date: todayStr, settings, reservationCounts: counts };
+    cachedTodaySettingsTime = Date.now();
 
     res.status(200).json({
       settings,

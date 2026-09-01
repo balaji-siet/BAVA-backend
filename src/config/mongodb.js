@@ -43,18 +43,23 @@ const connectMongoDB = async () => {
         console.log("   Username:", username || '(empty)');
         console.log("   Database:", dbName);
 
-        if (!username) {
-            lastMongoError = "MONGODB_URI missing username";
-            console.error("❌ MONGODB_URI is missing a username");
-            return;
+        const isLocalTestDb = (hostname === 'localhost' || hostname === '127.0.0.1') && dbName === 'smartmess_test';
+
+        if (!isLocalTestDb) {
+            if (!username) {
+                lastMongoError = "MONGODB_URI missing username";
+                console.error("❌ MONGODB_URI is missing a username");
+                return;
+            }
+            if (!url.password) {
+                lastMongoError = "MONGODB_URI missing password";
+                console.error("❌ MONGODB_URI is missing a password");
+                return;
+            }
         }
-        if (!url.password) {
-            lastMongoError = "MONGODB_URI missing password";
-            console.error("❌ MONGODB_URI is missing a password");
-            return;
-        }
-        if (!hostname || hostname === 'localhost') {
-            console.warn("⚠️  Hostname is", hostname, "— may not resolve on Render");
+
+        if (isLocalTestDb || hostname === 'localhost') {
+            console.warn("⚠️  Hostname is", hostname, "— local test mode");
         }
     } catch (parseErr) {
         console.warn("⚠️  Could not parse MONGODB_URI as URL:", parseErr.message);
@@ -65,14 +70,19 @@ const connectMongoDB = async () => {
     try {
         mongoose.set("strictQuery", true);
 
+        const maxPoolSize = parseInt(process.env.MONGO_MAX_POOL_SIZE || '50', 10);
+        const minPoolSize = parseInt(process.env.MONGO_MIN_POOL_SIZE || '5', 10);
+
         await mongoose.connect(mongoUri, {
+            maxPoolSize: maxPoolSize,
+            minPoolSize: minPoolSize,
             serverSelectionTimeoutMS: 10000,
             connectTimeoutMS: 15000
         });
 
         const duration = Date.now() - startTime;
         lastMongoError = null;
-        console.log(`✅ MongoDB Connected (${duration}ms)`);
+        console.log(`✅ MongoDB Connected (${duration}ms, maxPoolSize: ${maxPoolSize})`);
     } catch (err) {
         const duration = Date.now() - startTime;
 
@@ -98,7 +108,23 @@ const connectMongoDB = async () => {
     }
 };
 
+const getMongoStats = async () => {
+    if (mongoose.connection.readyState !== 1) return null;
+    try {
+        const adminDb = mongoose.connection.db.admin();
+        const serverStatus = await adminDb.serverStatus();
+        return {
+            activeConnections: serverStatus.connections ? serverStatus.connections.current : null,
+            availableConnections: serverStatus.connections ? serverStatus.connections.available : null,
+            totalCreatedConnections: serverStatus.connections ? serverStatus.connections.totalCreated : null
+        };
+    } catch (e) {
+        return { error: e.message };
+    }
+};
+
 module.exports = {
     connectMongoDB,
-    getMongoError
+    getMongoError,
+    getMongoStats
 };
