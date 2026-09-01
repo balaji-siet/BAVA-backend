@@ -57,8 +57,12 @@ function runScript(scriptRelativePath) {
     serverProcess = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
       cwd: path.join(__dirname, '..'),
       env: { ...process.env, MONGODB_URI: 'mongodb://127.0.0.1:27017/smartmess_test', NODE_ENV: 'test', PORT: '5000' },
-      stdio: 'inherit'
+      stdio: ['ignore', 'pipe', 'pipe']
     });
+    serverProcess.stdout.on('data', (data) => process.stdout.write(data));
+    serverProcess.stderr.on('data', (data) => process.stderr.write(data));
+    serverProcess.on('error', (err) => console.error('Backend process error:', err));
+    serverProcess.on('exit', (code) => console.log(`Backend process exited with code ${code}`));
 
     console.log('3. Waiting for GET /health to be ready...');
     await waitForHealth(5000);
