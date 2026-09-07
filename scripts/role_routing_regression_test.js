@@ -206,9 +206,89 @@ async function runRegressionSuite() {
   );
 
   // ------------------------------------------------------------------
-  // 4. STRESS-TESTING 50 ALTERNATING AUTHENTICATION TRANSITIONS
+  // 4. BACKEND JWT ROLE MIDDLEWARE HARDENING TESTS
   // ------------------------------------------------------------------
-  console.log('\n--- 4. Stress-Testing 50 Alternating Role Transitions ---');
+  console.log('\n--- 4. Backend JWT Role Middleware Hardening Tests ---');
+
+  const roleMiddlewareScenarios = [
+    {
+      description: 'Explicit Student token accepted on generic protected route',
+      token: jwt.sign({ studentId: 'student123', rollNumber: 'RA1001', role: 'student' }, JWT_SECRET),
+      path: '/api/attendance',
+      expected: (status) => status === 200 || status === 500,
+    },
+    {
+      description: 'Explicit Supervisor token accepted on supervisor route',
+      token: jwt.sign({ studentId: 'sup123', rollNumber: 'SUP1001', role: 'supervisor' }, JWT_SECRET),
+      path: '/api/dashboard',
+      expected: (status) => status === 200 || status === 500,
+    },
+    {
+      description: 'Signed token with no role rejected on generic protected route',
+      token: jwt.sign({ studentId: 'student123', rollNumber: 'RA1001' }, JWT_SECRET),
+      path: '/api/attendance',
+      expected: (status) => status === 401,
+    },
+    {
+      description: 'Signed token with empty role rejected on generic protected route',
+      token: jwt.sign({ studentId: 'student123', rollNumber: 'RA1001', role: '' }, JWT_SECRET),
+      path: '/api/attendance',
+      expected: (status) => status === 401,
+    },
+    {
+      description: 'Signed token with null role rejected on generic protected route',
+      token: jwt.sign({ studentId: 'student123', rollNumber: 'RA1001', role: null }, JWT_SECRET),
+      path: '/api/attendance',
+      expected: (status) => status === 401,
+    },
+    {
+      description: 'Signed token with invalid role rejected on generic protected route',
+      token: jwt.sign({ studentId: 'student123', rollNumber: 'RA1001', role: 'admin_fake' }, JWT_SECRET),
+      path: '/api/attendance',
+      expected: (status) => status === 401,
+    },
+    {
+      description: 'Missing role rejected on student-scoped attendance route',
+      token: jwt.sign({ studentId: 'student123', rollNumber: 'RA1001' }, JWT_SECRET),
+      path: '/api/nfc/attendance/me',
+      expected: (status) => status === 401,
+    },
+    {
+      description: 'Missing role rejected on supervisor route',
+      token: jwt.sign({ studentId: 'sup123', rollNumber: 'SUP1001' }, JWT_SECRET),
+      path: '/api/dashboard',
+      expected: (status) => status === 403 || status === 401,
+    },
+    {
+      description: 'isAdmin without explicit role rejected on supervisor route',
+      token: jwt.sign({ studentId: 'sup123', rollNumber: 'SUP1001', isAdmin: true }, JWT_SECRET),
+      path: '/api/dashboard',
+      expected: (status) => status === 403 || status === 401,
+    },
+  ];
+
+  let missingRoleStudentRoutes = 0;
+  for (const scenario of roleMiddlewareScenarios) {
+    const result = await makeRequest({
+      hostname: '127.0.0.1',
+      port: 5000,
+      path: scenario.path,
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${scenario.token}` }
+    });
+    const tokenRole = parseJwtPayload(scenario.token)?.role;
+    const evaluatedRoute = evaluateRoute(scenario.token, { id: 'x', role: tokenRole });
+    if ((tokenRole === undefined || tokenRole === null || tokenRole === '') && evaluatedRoute === 'StudentDashboard') {
+      missingRoleStudentRoutes++;
+    }
+    assert(scenario.expected(result.status), `${scenario.description} (Status: ${result.status})`);
+  }
+  assert(missingRoleStudentRoutes === 0, `Missing role -> StudentDashboard occurrences: ${missingRoleStudentRoutes}`);
+
+  // ------------------------------------------------------------------
+  // 5. STRESS-TESTING 50 ALTERNATING AUTHENTICATION TRANSITIONS
+  // ------------------------------------------------------------------
+  console.log('\n--- 5. Stress-Testing 50 Alternating Role Transitions ---');
   
   const simulatedStorage = {};
 

@@ -274,7 +274,7 @@ router.get('/diagnostics', async (req, res) => {
     const duration = Date.now() - startTime;
     return res.status(200).json({
       status: 'online',
-      databaseName: 'smartmess_test',
+      databaseStatus: 'connected',
       connectionStatus: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
       errorReason: errorReason || null,
       totalStudents: studentsCount,
