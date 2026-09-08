@@ -1,7 +1,7 @@
 const http = require('http');
 const BASE_URL = 'http://localhost:5000';
 
-function makeRequest(method, pathStr, body = null, token = null) {
+function makeRequest(method, pathStr, body = null, token = null, extraHeaders = {}) {
   return new Promise((resolve) => {
     const url = new URL(pathStr, BASE_URL);
     const options = {
@@ -9,7 +9,7 @@ function makeRequest(method, pathStr, body = null, token = null) {
       hostname: url.hostname,
       port: url.port,
       path: url.pathname + url.search,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
       timeout: 10000
     };
 
@@ -65,16 +65,25 @@ async function runConcurrencyIntegrityTests() {
     process.exit(1);
   }
 
+  const enrollRes = await makeRequest('POST', '/api/reservation-device/enroll', null, token);
+  const deviceToken = enrollRes.data && enrollRes.data.deviceToken;
+  console.log(`   Reservation Device Enrollment: ${deviceToken ? 'SUCCESS' : 'FAILED'} (Status: ${enrollRes.status})`);
+  if (!deviceToken) {
+    console.error("Device enrollment failed. Cannot proceed with reservation concurrency testing.");
+    process.exit(1);
+  }
+
   // TEST SCENARIO A: 10 Concurrent Meal Reservation Requests
   console.log("\n2. TEST SCENARIO A: 10 Concurrent Meal Reservation Requests for same student...");
   const dateStr = '2026-09-01';
+  const deviceHeaders = { 'X-SmartMess-Device-Token': deviceToken };
   const resPromises = Array.from({ length: 10 }, (_, i) => {
     return makeRequest('POST', '/api/reservations/create', {
       date: dateStr,
       breakfast: true,
       lunch: i % 2 === 0,
       dinner: true
-    }, token);
+    }, token, deviceHeaders);
   });
 
   const resResults = await Promise.all(resPromises);

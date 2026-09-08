@@ -75,6 +75,7 @@ function runScript(scriptRelativePath) {
     await runScript('scripts/role_routing_regression_test.js');
     await runScript('scripts/remember_login_regression_test.js');
     await runScript('scripts/password_security_regression_test.js');
+    await runScript('scripts/reservation_device_binding_regression_test.js');
     await runScript('scripts/concurrency_integrity_test.js');
 
     console.log('\n============================================================');

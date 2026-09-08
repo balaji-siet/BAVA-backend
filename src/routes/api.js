@@ -12,6 +12,7 @@ const Attendance = require('../models/Attendance');
 
 const authController = require('../controllers/authController');
 const reservationController = require('../controllers/reservationController');
+const reservationDeviceController = require('../controllers/reservationDeviceController');
 const attendanceController = require('../controllers/attendanceController');
 const analyticsController = require('../controllers/analyticsController');
 const reportController = require('../controllers/reportController');
@@ -118,6 +119,9 @@ router.post('/register', rateLimiter(10, 15 * 60 * 1000), (req, res, next) => {
 });
 router.post('/login', rateLimiter(15, 15 * 60 * 1000), authController.studentLogin);
 router.get('/me', verifyToken, authController.getMe);
+router.get('/reservation-device/status', verifyToken, reservationDeviceController.getDeviceStatus);
+router.post('/reservation-device/enroll', verifyToken, reservationDeviceController.enrollDevice);
+router.post('/students/:studentId/reservation-device/reset', verifyAdmin, reservationDeviceController.resetStudentDevice);
 
 // --- MEAL RESERVATION MODULE ---
 router.post('/reservations/create', verifyToken, reservationController.saveReservations);

@@ -11,6 +11,10 @@ const studentSchema = new mongoose.Schema({
   phone: { type: String, default: '' },
   password: { type: String, required: true },
   nfc_card_id: { type: String, default: null, index: true },
+  reservationDeviceTokenHash: { type: String, default: null, select: false },
+  reservationDeviceBoundAt: { type: Date, default: null },
+  reservationDeviceLastUsedAt: { type: Date, default: null },
+  reservationDeviceResetAt: { type: Date, default: null },
   points: { type: Number, default: 0 },
   status: { type: String, default: 'active' }
 }, {
