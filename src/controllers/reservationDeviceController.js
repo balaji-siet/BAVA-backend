@@ -1,7 +1,9 @@
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const Student = require('../models/Student');
 
 const DEVICE_TOKEN_HEADER = 'x-smartmess-device-token';
+const MEAL_PASSWORD_HEADER = 'x-smartmess-meal-password';
 
 const hashDeviceToken = (token) => crypto.createHash('sha256').update(token, 'utf8').digest('hex');
 
@@ -108,11 +110,41 @@ const validateStudentDeviceBinding = async (req, res) => {
   return true;
 };
 
+const validateStudentMealPasswordIfProvided = async (req, res) => {
+  const receivedPassword = req.headers[MEAL_PASSWORD_HEADER];
+  if (!receivedPassword) return true;
+  if (typeof receivedPassword !== 'string') {
+    res.status(403).json({ code: 'MEAL_PASSWORD_INVALID', error: 'Reservation authentication failed.' });
+    return false;
+  }
+
+  const student = await Student.findById(req.userId).select('password');
+  if (!student) {
+    res.status(404).json({ code: 'STUDENT_NOT_FOUND', error: 'Student account not found.' });
+    return false;
+  }
+
+  let isMatch = false;
+  try {
+    isMatch = await bcrypt.compare(receivedPassword, student.password);
+  } catch (e) {
+    isMatch = false;
+  }
+
+  if (!isMatch) {
+    res.status(403).json({ code: 'MEAL_PASSWORD_INVALID', error: 'Reservation authentication failed.' });
+    return false;
+  }
+
+  return true;
+};
 module.exports = {
   DEVICE_TOKEN_HEADER,
+  MEAL_PASSWORD_HEADER,
   hashDeviceToken,
   getDeviceStatus,
   enrollDevice,
   resetStudentDevice,
   validateStudentDeviceBinding,
+  validateStudentMealPasswordIfProvided,
 };

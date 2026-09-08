@@ -1,6 +1,6 @@
 const Reservation = require('../models/Reservation');
 const Student = require('../models/Student');
-const { validateStudentDeviceBinding } = require('./reservationDeviceController');
+const { validateStudentDeviceBinding, validateStudentMealPasswordIfProvided } = require('./reservationDeviceController');
 
 // Helper to get time
 function getCurrentTime() {
@@ -49,6 +49,8 @@ const saveReservations = async (req, res) => {
   try {
     const deviceOk = await validateStudentDeviceBinding(req, res);
     if (!deviceOk) return;
+    const passwordOk = await validateStudentMealPasswordIfProvided(req, res);
+    if (!passwordOk) return;
 
     let rollNumber = req.userRoll || req.body.roll_number;
     if (!rollNumber && studentId) {
@@ -115,6 +117,8 @@ const cancelReservation = async (req, res) => {
   try {
     const deviceOk = await validateStudentDeviceBinding(req, res);
     if (!deviceOk) return;
+    const passwordOk = await validateStudentMealPasswordIfProvided(req, res);
+    if (!passwordOk) return;
 
     let rollNumber = req.userRoll || req.body.roll_number;
     if (!rollNumber && studentId) {
