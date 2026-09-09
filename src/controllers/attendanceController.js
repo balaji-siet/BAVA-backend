@@ -41,7 +41,7 @@ const markAttendance = async (req, res) => {
         attendance_status: statusVal,
         verification_method: methodVal
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, returnDocument: 'after' }
     );
 
     res.status(200).json({ message: 'Attendance marked successfully', record: attendanceRecord });

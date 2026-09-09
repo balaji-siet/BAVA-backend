@@ -13,3 +13,10 @@ coverage/
 *- Copy*
 * - Copy*
 *.bak
+logs/
+*.json.bak
+scripts/*_results.json
+scripts/*_summary.json
+scripts/*_report.json
+scripts/realistic_load_test_*.json
+
