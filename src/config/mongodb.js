@@ -65,7 +65,7 @@ const connectMongoDB = async () => {
         console.warn("⚠️  Could not parse MONGODB_URI as URL:", parseErr.message);
     }
 
-    // 4. Attempt connection with raw error logging
+    // 4. Attempt connection with raw error logging and tuned connection pool
     const startTime = Date.now();
     try {
         mongoose.set("strictQuery", true);
@@ -77,7 +77,10 @@ const connectMongoDB = async () => {
             maxPoolSize: maxPoolSize,
             minPoolSize: minPoolSize,
             serverSelectionTimeoutMS: 10000,
-            connectTimeoutMS: 15000
+            connectTimeoutMS: 15000,
+            socketTimeoutMS: 30000,
+            maxIdleTimeMS: 60000,
+            waitQueueTimeoutMS: 5000
         });
 
         const duration = Date.now() - startTime;

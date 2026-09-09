@@ -12,5 +12,8 @@ const reservationSchema = new mongoose.Schema({
 });
 
 reservationSchema.index({ roll_number: 1, reservation_date: 1 }, { unique: true });
+reservationSchema.index({ reservation_date: 1, breakfast: 1 });
+reservationSchema.index({ reservation_date: 1, lunch: 1 });
+reservationSchema.index({ reservation_date: 1, dinner: 1 });
 
 module.exports = mongoose.model('Reservation', reservationSchema);

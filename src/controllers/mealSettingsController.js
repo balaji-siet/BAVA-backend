@@ -2,6 +2,7 @@ const MealSettings = require('../models/MealSettings');
 const Reservation = require('../models/Reservation');
 const SMSLog = require('../models/SMSLog');
 const { sendCutoffSMS } = require('../services/smsService');
+const { getIndiaDateString, getIndiaTomorrowDateString } = require('../utils/dateUtils');
 
 const DEFAULT_TIMINGS = {
   breakfast: { open_time: '06:00', close_time: '09:30', enabled: true, sms_sent: false },
@@ -10,13 +11,11 @@ const DEFAULT_TIMINGS = {
 };
 
 function getTodayDateString() {
-  return new Date().toISOString().split('T')[0];
+  return getIndiaDateString();
 }
 
 function getTomorrowDateString() {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  return tomorrow.toISOString().split('T')[0];
+  return getIndiaTomorrowDateString();
 }
 
 let cachedTodaySettingsData = null;
@@ -54,7 +53,7 @@ const getTodaySettings = async (req, res) => {
       settings = (await newSettings.save()).toObject();
     }
 
-    // Get live reservation counts for today
+    // Get live reservation counts for today via indexed countDocuments
     const counts = await getReservationCountsForDate(todayStr);
 
     cachedTodaySettingsData = { date: todayStr, settings, reservationCounts: counts };
@@ -75,17 +74,17 @@ const getTodaySettings = async (req, res) => {
 const getSettingsByDate = async (req, res) => {
   try {
     const dateStr = req.params.date || getTodayDateString();
-    let settings = await MealSettings.findOne({ date: dateStr });
+    let settings = await MealSettings.findOne({ date: dateStr }).lean();
 
     if (!settings) {
-      settings = new MealSettings({
+      const newSettings = new MealSettings({
         date: dateStr,
         breakfast: DEFAULT_TIMINGS.breakfast,
         lunch: DEFAULT_TIMINGS.lunch,
         dinner: DEFAULT_TIMINGS.dinner,
         updatedBy: 'System Default'
       });
-      await settings.save();
+      settings = (await newSettings.save()).toObject();
     }
 
     const counts = await getReservationCountsForDate(dateStr);
@@ -138,6 +137,7 @@ const saveSettings = async (req, res) => {
 
     settingsDoc.updatedBy = req.userRoll || 'Supervisor';
     await settingsDoc.save();
+    invalidateSettingsCache();
 
     console.log(`[MEAL SETTINGS] Updated for date: ${targetDate}`);
 
@@ -196,6 +196,7 @@ const copyTodayToTomorrow = async (req, res) => {
 
     tomorrowDoc.updatedBy = 'Copied from Today';
     await tomorrowDoc.save();
+    invalidateSettingsCache();
 
     res.status(200).json({
       message: "Copied today's schedule to tomorrow successfully",
@@ -223,6 +224,7 @@ const resetToDefault = async (req, res) => {
     settingsDoc.updatedBy = 'Reset to Default';
 
     await settingsDoc.save();
+    invalidateSettingsCache();
 
     res.status(200).json({
       message: 'Reset reservation schedule to default timings',
@@ -234,19 +236,14 @@ const resetToDefault = async (req, res) => {
   }
 };
 
-// Helper: Count live reservations from MongoDB
+// Helper: Count live reservations from MongoDB using index-covered countDocuments
 async function getReservationCountsForDate(dateStr) {
   try {
-    const reservations = await Reservation.find({ reservation_date: dateStr });
-    let breakfast = 0;
-    let lunch = 0;
-    let dinner = 0;
-
-    reservations.forEach(r => {
-      if (r.breakfast) breakfast++;
-      if (r.lunch) lunch++;
-      if (r.dinner) dinner++;
-    });
+    const [breakfast, lunch, dinner] = await Promise.all([
+      Reservation.countDocuments({ reservation_date: dateStr, breakfast: true }),
+      Reservation.countDocuments({ reservation_date: dateStr, lunch: true }),
+      Reservation.countDocuments({ reservation_date: dateStr, dinner: true })
+    ]);
 
     return { breakfast, lunch, dinner, total: breakfast + lunch + dinner };
   } catch (e) {
@@ -258,7 +255,7 @@ async function getReservationCountsForDate(dateStr) {
 async function checkCutoffsAndSendSMS() {
   try {
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = getTodayDateString();
     const currentHours = String(now.getHours()).padStart(2, '0');
     const currentMinutes = String(now.getMinutes()).padStart(2, '0');
     const currentTimeStr = `${currentHours}:${currentMinutes}`;

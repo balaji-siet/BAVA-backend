@@ -1,4 +1,5 @@
 const Menu = require('../models/Menu');
+const { getIndiaDateString, getIndiaTomorrowDateString } = require('../utils/dateUtils');
 
 const DEFAULT_MENU_ITEMS = {
   breakfast: { name: 'Breakfast', items: ['Idli', 'Sambar', 'Coconut Chutney', 'Tea/Coffee'], is_veg: true, category: 'South Indian', description: 'Freshly steamed idlis served with hot sambar.', calories: 350, status: 'Available' },

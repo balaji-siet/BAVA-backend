@@ -1,6 +1,8 @@
 const Reservation = require('../models/Reservation');
 const Student = require('../models/Student');
+const IdempotencyKey = require('../models/IdempotencyKey');
 const { validateStudentDeviceBinding, validateStudentMealPasswordIfProvided } = require('./reservationDeviceController');
+const { getIndiaDateString, getIndiaTomorrowDateString } = require('../utils/dateUtils');
 const { invalidateSettingsCache } = require('./mealSettingsController');
 
 // Helper to get time
@@ -37,14 +39,28 @@ function isWindowOpen(mealType, dateStr, bypass = false) {
   return false;
 }
 
-// Create or update meal reservations
+// Create or update meal reservations atomically with idempotency support
 const saveReservations = async (req, res) => {
   const studentId = req.userId;
-  const date = req.body.date || req.body.reservation_date || new Date().toISOString().split('T')[0];
+  const date = req.body.date || req.body.reservation_date || getIndiaDateString();
   const { breakfast, lunch, dinner, meal_type } = req.body;
+  const operationId = req.headers['x-operation-id'] || req.headers['idempotency-key'] || req.body.operation_id;
 
   if (!date) {
     return res.status(400).json({ error: 'Date is required' });
+  }
+
+  // Check idempotency cache if operationId is supplied
+  if (operationId) {
+    try {
+      const cached = await IdempotencyKey.findOne({ key: operationId }).lean();
+      if (cached) {
+        console.log(`[Idempotency] Returning cached response for key: ${operationId}`);
+        return res.status(cached.statusCode || 200).json(cached.response);
+      }
+    } catch (idemCheckErr) {
+      console.warn('[Idempotency] Check error:', idemCheckErr.message);
+    }
   }
 
   try {
@@ -60,60 +76,65 @@ const saveReservations = async (req, res) => {
     }
     rollNumber = rollNumber || 'UNKNOWN';
 
-    let reservationDoc = await Reservation.findOne({
-      $or: [
-        { student_id: studentId, reservation_date: date },
-        { roll_number: rollNumber, reservation_date: date }
-      ]
-    });
+    // Build atomic update payload
+    const updateFields = {};
+    if (studentId) updateFields.student_id = studentId;
+    if (rollNumber && rollNumber !== 'UNKNOWN') updateFields.roll_number = rollNumber;
+    if (breakfast !== undefined) updateFields.breakfast = Boolean(breakfast);
+    if (lunch !== undefined) updateFields.lunch = Boolean(lunch);
+    if (dinner !== undefined) updateFields.dinner = Boolean(dinner);
+    if (meal_type === 'breakfast') updateFields.breakfast = true;
+    if (meal_type === 'lunch') updateFields.lunch = true;
+    if (meal_type === 'dinner') updateFields.dinner = true;
 
-    if (!reservationDoc) {
-      reservationDoc = new Reservation({
-        student_id: studentId,
-        roll_number: rollNumber,
-        reservation_date: date,
-        breakfast: false,
-        lunch: false,
-        dinner: false
-      });
-    }
+    // Atomic findOneAndUpdate with upsert
+    const reservationDoc = await Reservation.findOneAndUpdate(
+      { roll_number: rollNumber, reservation_date: date },
+      { $set: updateFields },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-    if (breakfast !== undefined) reservationDoc.breakfast = Boolean(breakfast);
-    if (lunch !== undefined) reservationDoc.lunch = Boolean(lunch);
-    if (dinner !== undefined) reservationDoc.dinner = Boolean(dinner);
-    if (meal_type === 'breakfast') reservationDoc.breakfast = true;
-    if (meal_type === 'lunch') reservationDoc.lunch = true;
-    if (meal_type === 'dinner') reservationDoc.dinner = true;
-
-    await reservationDoc.save();
     invalidateSettingsCache();
 
-    res.status(200).json({ message: 'Reservations saved successfully', reservation: reservationDoc });
-    console.log("Reservation Saved");
-  } catch (error) {
-    if (error.code === 11000) {
+    const responseData = { message: 'Reservations saved successfully', reservation: reservationDoc };
+
+    if (operationId) {
       try {
-        const rollNumber = req.userRoll || req.body.roll_number;
-        const fallbackDoc = await Reservation.findOneAndUpdate(
-          { roll_number: rollNumber, reservation_date: date },
-          { $set: { breakfast: Boolean(breakfast), lunch: Boolean(lunch), dinner: Boolean(dinner) } },
-          { new: true }
-        );
-        return res.status(200).json({ message: 'Reservations saved successfully', reservation: fallbackDoc });
-      } catch (fallbackErr) {}
+        await IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 });
+      } catch (idemSaveErr) {
+        // Ignore duplicate key if concurrently stored
+      }
     }
-    console.error("Mongo Error Details:", error);
+
+    res.status(200).json(responseData);
+    console.log(`[Reservation] Saved atomically for roll: ${rollNumber}, date: ${date}`);
+  } catch (error) {
+    console.error("Reservation Error Details:", error);
     res.status(500).json({ error: 'Database error saving reservation' });
   }
 };
 
-// Cancel reservation endpoint
+// Cancel reservation endpoint atomically
 const cancelReservation = async (req, res) => {
   const studentId = req.userId;
   const { date, meal_type } = req.body;
+  const operationId = req.headers['x-operation-id'] || req.headers['idempotency-key'] || req.body.operation_id;
 
   if (!date) {
     return res.status(400).json({ error: 'Date is required' });
+  }
+
+  // Check idempotency cache
+  if (operationId) {
+    try {
+      const cached = await IdempotencyKey.findOne({ key: operationId }).lean();
+      if (cached) {
+        console.log(`[Idempotency] Returning cached response for cancel key: ${operationId}`);
+        return res.status(cached.statusCode || 200).json(cached.response);
+      }
+    } catch (idemCheckErr) {
+      console.warn('[Idempotency] Check error:', idemCheckErr.message);
+    }
   }
 
   try {
@@ -127,29 +148,36 @@ const cancelReservation = async (req, res) => {
       const student = await Student.findById(studentId).select('roll_number').lean();
       rollNumber = student ? student.roll_number : req.body.roll_number;
     }
+    rollNumber = rollNumber || 'UNKNOWN';
 
-    let reservationDoc = await Reservation.findOne({
-      $or: [
-        { student_id: studentId, reservation_date: date },
-        { roll_number: rollNumber, reservation_date: date }
-      ]
-    });
-
-    if (reservationDoc) {
-      if (!meal_type) {
-        reservationDoc.breakfast = false;
-        reservationDoc.lunch = false;
-        reservationDoc.dinner = false;
-      } else {
-        if (meal_type === 'breakfast') reservationDoc.breakfast = false;
-        if (meal_type === 'lunch') reservationDoc.lunch = false;
-        if (meal_type === 'dinner') reservationDoc.dinner = false;
-      }
-      await reservationDoc.save();
-      invalidateSettingsCache();
+    const updateFields = {};
+    if (!meal_type) {
+      updateFields.breakfast = false;
+      updateFields.lunch = false;
+      updateFields.dinner = false;
+    } else {
+      if (meal_type === 'breakfast') updateFields.breakfast = false;
+      if (meal_type === 'lunch') updateFields.lunch = false;
+      if (meal_type === 'dinner') updateFields.dinner = false;
     }
 
-    res.status(200).json({ message: 'Reservations cancelled successfully' });
+    const reservationDoc = await Reservation.findOneAndUpdate(
+      { roll_number: rollNumber, reservation_date: date },
+      { $set: updateFields },
+      { new: true }
+    );
+
+    invalidateSettingsCache();
+
+    const responseData = { message: 'Reservations cancelled successfully', reservation: reservationDoc };
+
+    if (operationId) {
+      try {
+        await IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 });
+      } catch (idemSaveErr) {}
+    }
+
+    res.status(200).json(responseData);
   } catch (error) {
     console.error('Cancel reservations error:', error);
     res.status(500).json({ error: 'Database connection failed' });
@@ -159,7 +187,7 @@ const cancelReservation = async (req, res) => {
 // Get reservations for a specific date
 const getReservationsByDate = async (req, res) => {
   const studentId = req.userId;
-  const date = req.query.date || getCurrentTime().toISOString().split('T')[0];
+  const date = req.query.date || getIndiaDateString(getCurrentTime());
 
   try {
     let rollNumber = req.userRoll || req.query.roll_number;
@@ -168,12 +196,13 @@ const getReservationsByDate = async (req, res) => {
       rollNumber = student ? student.roll_number : req.query.roll_number;
     }
 
-    const reservationDoc = await Reservation.findOne({
-      $or: [
-        { student_id: studentId, reservation_date: date },
-        { roll_number: rollNumber, reservation_date: date }
-      ]
-    }).lean();
+    const queryConditions = [];
+    if (rollNumber) queryConditions.push({ roll_number: rollNumber, reservation_date: date });
+    if (studentId) queryConditions.push({ student_id: studentId, reservation_date: date });
+
+    const query = queryConditions.length > 0 ? { $or: queryConditions } : { reservation_date: date };
+
+    const reservationDoc = await Reservation.findOne(query).lean();
 
     const reservations = {
       breakfast: reservationDoc ? reservationDoc.breakfast : false,
@@ -232,7 +261,7 @@ const getDebugInfo = (req, res) => {
   
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const tomorrowStr = getIndiaTomorrowDateString(now);
 
   res.status(200).json({
     currentTime: now.toISOString(),

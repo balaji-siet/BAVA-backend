@@ -7,42 +7,44 @@ const getDashboardAnalytics = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    // 1. Total Active Students
-    const totalStudents = await Student.countDocuments({ status: 'active' });
+    // 1. Total Active Students & Meal reservations for today (parallel countDocuments)
+    const [
+      totalStudents,
+      breakfastReservations,
+      lunchReservations,
+      dinnerReservations,
+      dailyAttendance
+    ] = await Promise.all([
+      Student.countDocuments({ status: 'active' }),
+      Reservation.countDocuments({ reservation_date: today, breakfast: true }),
+      Reservation.countDocuments({ reservation_date: today, lunch: true }),
+      Reservation.countDocuments({ reservation_date: today, dinner: true }),
+      Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' })
+    ]);
 
-    // 2. Breakfast, Lunch, Dinner reservations for today
-    const reservationsToday = await Reservation.find({ reservation_date: today });
-    let breakfastReservations = 0;
-    let lunchReservations = 0;
-    let dinnerReservations = 0;
-
-    reservationsToday.forEach(r => {
-      if (r.breakfast) breakfastReservations++;
-      if (r.lunch) lunchReservations++;
-      if (r.dinner) dinnerReservations++;
-    });
-
-    // 3. Daily Attendance (today)
-    const dailyAttendance = await Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' });
-
-    // 4. Weekly Attendance (past 7 days)
+    // 2. Weekly Attendance (past 7 days) & Monthly Attendance (past 30 days)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const weeklyAttendance = await Attendance.countDocuments({
-      attendance_date: { $gte: sevenDaysAgo },
-      attendance_status: 'present'
-    });
-
-    // 5. Monthly Attendance (past 30 days)
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const monthlyAttendance = await Attendance.countDocuments({
-      attendance_date: { $gte: thirtyDaysAgo },
-      attendance_status: 'present'
-    });
 
-    // 6. Participation Percentage
-    const totalReservations = await Reservation.countDocuments();
-    const totalAttendance = await Attendance.countDocuments({ attendance_status: 'present' });
+    const [
+      weeklyAttendance,
+      monthlyAttendance,
+      totalReservations,
+      totalAttendance
+    ] = await Promise.all([
+      Attendance.countDocuments({
+        attendance_date: { $gte: sevenDaysAgo },
+        attendance_status: 'present'
+      }),
+      Attendance.countDocuments({
+        attendance_date: { $gte: thirtyDaysAgo },
+        attendance_status: 'present'
+      }),
+      Reservation.countDocuments(),
+      Attendance.countDocuments({ attendance_status: 'present' })
+    ]);
 
+    // 3. Participation Percentage
     let participationPercentage = 100;
     if (totalReservations > 0) {
       participationPercentage = Math.round((totalAttendance / totalReservations) * 100);
@@ -64,43 +66,98 @@ const getDashboardAnalytics = async (req, res) => {
   }
 };
 
-// GET /api/students/non-attending
+// GET /api/students/non-attending (Aggregated in single MongoDB query instead of N+1)
 const getNonAttendingStudents = async (req, res) => {
   try {
-    const students = await Student.find({ status: 'active' });
-    const nonAttending = [];
-
-    for (const student of students) {
-      const reservedCount = await Reservation.countDocuments({
-        $or: [{ student_id: student._id }, { roll_number: student.roll_number }]
-      });
-      const attendedCount = await Attendance.countDocuments({
-        $or: [{ student_id: student._id }, { roll_number: student.roll_number }],
-        attendance_status: 'present'
-      });
-
-      const missed = reservedCount > attendedCount ? (reservedCount - attendedCount) : 0;
-      let attendancePercentage = 100;
-      if (reservedCount > 0) {
-        attendancePercentage = Math.round((attendedCount / reservedCount) * 100);
+    const results = await Student.aggregate([
+      { $match: { status: 'active' } },
+      {
+        $lookup: {
+          from: 'reservations',
+          let: { sId: '$_id', sRoll: '$roll_number' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$student_id', '$$sId'] },
+                    { $eq: ['$roll_number', '$$sRoll'] }
+                  ]
+                }
+              }
+            },
+            { $count: 'total' }
+          ],
+          as: 'resCount'
+        }
+      },
+      {
+        $lookup: {
+          from: 'attendances',
+          let: { sId: '$_id', sRoll: '$roll_number' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$attendance_status', 'present'] },
+                    {
+                      $or: [
+                        { $eq: ['$student_id', '$$sId'] },
+                        { $eq: ['$roll_number', '$$sRoll'] }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            { $count: 'total' }
+          ],
+          as: 'attCount'
+        }
+      },
+      {
+        $project: {
+          id: '$_id',
+          name: 1,
+          roll_number: 1,
+          hostel_block: 1,
+          department: 1,
+          email: 1,
+          mobile_number: { $ifNull: ['$phone', ''] },
+          reservedCount: { $ifNull: [{ $arrayElemAt: ['$resCount.total', 0] }, 0] },
+          attendedCount: { $ifNull: [{ $arrayElemAt: ['$attCount.total', 0] }, 0] }
+        }
+      },
+      {
+        $addFields: {
+          missed_meals: {
+            $cond: [
+              { $gt: ['$reservedCount', '$attendedCount'] },
+              { $subtract: ['$reservedCount', '$attendedCount'] },
+              0
+            ]
+          },
+          attendance_percentage: {
+            $cond: [
+              { $gt: ['$reservedCount', 0] },
+              { $round: [{ $multiply: [{ $divide: ['$attendedCount', '$reservedCount'] }, 100] }, 0] },
+              100
+            ]
+          }
+        }
+      },
+      {
+        $match: {
+          $or: [
+            { attendance_percentage: { $lt: 85 } },
+            { missed_meals: { $gt: 0 } }
+          ]
+        }
       }
+    ]);
 
-      if (attendancePercentage < 85 || missed > 0) {
-        nonAttending.push({
-          id: student._id,
-          name: student.name,
-          roll_number: student.roll_number,
-          hostel_block: student.hostel_block,
-          department: student.department,
-          email: student.email,
-          mobile_number: student.phone || '',
-          missed_meals: missed,
-          attendance_percentage: attendancePercentage
-        });
-      }
-    }
-
-    res.status(200).json(nonAttending);
+    res.status(200).json(results);
   } catch (error) {
     console.error('Fetch non attending students error:', error);
     res.status(500).json({ error: 'Database connection failed' });
@@ -113,7 +170,8 @@ const getLeaderboard = async (req, res) => {
     const topStudents = await Student.find({ status: 'active' })
       .select('name roll_number department hostel_block points')
       .sort({ points: -1 })
-      .limit(10);
+      .limit(10)
+      .lean();
 
     res.status(200).json(topStudents);
   } catch (error) {
@@ -130,19 +188,14 @@ const getForecast = async (req, res) => {
     const tomStr = tomorrow.toISOString().split('T')[0];
 
     const today = new Date().toISOString().split('T')[0];
-    const reservationsToday = await Reservation.find({ reservation_date: today });
 
-    let bCount = 0;
-    let lCount = 0;
-    let dCount = 0;
+    const [bCount, lCount, dCount, activeStudents] = await Promise.all([
+      Reservation.countDocuments({ reservation_date: today, breakfast: true }),
+      Reservation.countDocuments({ reservation_date: today, lunch: true }),
+      Reservation.countDocuments({ reservation_date: today, dinner: true }),
+      Student.countDocuments({ status: 'active' })
+    ]);
 
-    reservationsToday.forEach(r => {
-      if (r.breakfast) bCount++;
-      if (r.lunch) lCount++;
-      if (r.dinner) dCount++;
-    });
-
-    const activeStudents = await Student.countDocuments({ status: 'active' });
     const baseline = Math.max(activeStudents, 50);
 
     const forecasts = [
@@ -158,10 +211,31 @@ const getForecast = async (req, res) => {
   }
 };
 
-// GET /api/students
+// GET /api/students (Supports search and pagination)
 const getStudentsList = async (req, res) => {
   try {
-    const students = await Student.find({ status: 'active' }).select('-password');
+    const { search, page, limit } = req.query;
+    const query = { status: 'active' };
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { name: regex },
+        { roll_number: regex },
+        { department: regex }
+      ];
+    }
+
+    let studentsQuery = Student.find(query).select('-password');
+
+    if (page && limit) {
+      const pageNum = Math.max(1, parseInt(page, 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+      const skip = (pageNum - 1) * limitNum;
+      studentsQuery = studentsQuery.skip(skip).limit(limitNum);
+    }
+
+    const students = await studentsQuery.lean();
     res.status(200).json(students);
   } catch (error) {
     console.error('Fetch students list error:', error);
@@ -176,4 +250,3 @@ module.exports = {
   getForecast,
   getStudentsList
 };
-

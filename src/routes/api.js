@@ -4,6 +4,7 @@ const { body, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 
 const { getMongoError } = require('../config/mongodb');
+const { getIndiaDateString } = require('../utils/dateUtils');
 
 const Student = require('../models/Student');
 const Supervisor = require('../models/Supervisor');
@@ -136,7 +137,7 @@ router.get('/reservations/today', verifyToken, reservationController.getReservat
 // Live per-meal reservation counts (Supervisor Dashboard)
 router.get('/reservations/counts', verifyToken, async (req, res) => {
   try {
-    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const date = req.query.date || getIndiaDateString();
     const [breakfast, lunch, dinner] = await Promise.all([
       Reservation.countDocuments({ reservation_date: date, breakfast: true }),
       Reservation.countDocuments({ reservation_date: date, lunch: true }),
@@ -173,7 +174,7 @@ router.get('/attendance/history', async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start || '2026-05-01';
-    const endDate = end || new Date().toISOString().split('T')[0];
+    const endDate = end || getIndiaDateString();
     
     const attendance = await Attendance.aggregate([
       { $match: { attendance_date: { $gte: startDate, $lte: endDate }, attendance_status: 'present' } },
@@ -261,7 +262,7 @@ router.post('/debug/trigger-notification', async (req, res) => {
   try {
     const { mealType, date, time, phoneNumber } = req.body || {};
     const targetMeal = mealType || 'lunch';
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || getIndiaDateString();
     const targetPhone = phoneNumber || '8015667502';
     
     const count = await Reservation.countDocuments({
