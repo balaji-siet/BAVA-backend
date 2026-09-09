@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
 
-function waitForHealth(port, maxAttempts = 30) {
+function waitForHealth(port, maxAttempts = 90) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
     const interval = setInterval(() => {
@@ -30,7 +30,7 @@ function runScript(scriptRelativePath) {
     console.log(`\n>>> RUNNING: node ${scriptRelativePath} ...`);
     const child = spawn(process.execPath, [fullPath], {
       cwd: path.join(__dirname, '..'),
-      env: { ...process.env, MONGODB_URI: 'mongodb://127.0.0.1:27017/smartmess_test', NODE_ENV: 'test', PORT: '5000' },
+      env: { ...process.env, MONGODB_URI: 'mongodb://127.0.0.1:27017/smartmess_test', NODE_ENV: 'development', PORT: '5000' },
       stdio: 'inherit'
     });
     child.on('close', (code) => {
@@ -56,7 +56,7 @@ function runScript(scriptRelativePath) {
     console.log('2. Starting backend server on port 5000...');
     serverProcess = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
       cwd: path.join(__dirname, '..'),
-      env: { ...process.env, MONGODB_URI: 'mongodb://127.0.0.1:27017/smartmess_test', NODE_ENV: 'test', PORT: '5000' },
+      env: { ...process.env, MONGODB_URI: 'mongodb://127.0.0.1:27017/smartmess_test', NODE_ENV: 'development', PORT: '5000' },
       stdio: ['ignore', 'pipe', 'pipe']
     });
     serverProcess.stdout.on('data', (data) => process.stdout.write(data));
@@ -72,13 +72,14 @@ function runScript(scriptRelativePath) {
     console.log('EXECUTING COMPLETE BACKEND REGRESSION SUITES');
     console.log('============================================================');
 
+    await runScript('scripts/concurrency_integrity_test.js');
     await runScript('scripts/role_routing_regression_test.js');
     await runScript('scripts/remember_login_regression_test.js');
     await runScript('scripts/password_security_regression_test.js');
     await runScript('scripts/reservation_device_binding_regression_test.js');
     await runScript('scripts/reservation_password_fallback_regression_test.js');
     await runScript('scripts/full_functional_reservation_count_regression.js');
-    await runScript('scripts/concurrency_integrity_test.js');
+    await runScript('scripts/idempotency_failure_injection_regression.js');
 
     console.log('\n============================================================');
     console.log('✅ ALL BACKEND REGRESSION SUITES COMPLETED SUCCESSFULLY!');

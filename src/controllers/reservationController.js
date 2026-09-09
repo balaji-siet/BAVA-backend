@@ -39,6 +39,23 @@ function isWindowOpen(mealType, dateStr, bypass = false) {
   return false;
 }
 
+async function persistIdempotencyResponse(operationId, response, statusCode = 200) {
+  if (!operationId) return;
+
+  try {
+    await IdempotencyKey.findOneAndUpdate(
+      { key: operationId },
+      { $setOnInsert: { key: operationId, response, statusCode } },
+      { upsert: true, returnDocument: 'after' }
+    ).lean();
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return;
+    }
+    throw err;
+  }
+}
+
 // Create or update meal reservations atomically with idempotency support
 const saveReservations = async (req, res) => {
   const studentId = req.userId;
@@ -98,9 +115,7 @@ const saveReservations = async (req, res) => {
 
     const responseData = { message: 'Reservations saved successfully', reservation: reservationDoc };
 
-    if (operationId) {
-      IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 }).catch(() => {});
-    }
+    await persistIdempotencyResponse(operationId, responseData, 200);
 
     return res.status(200).json(responseData);
   } catch (error) {
@@ -166,9 +181,7 @@ const cancelReservation = async (req, res) => {
 
     const responseData = { message: 'Reservations cancelled successfully', reservation: reservationDoc };
 
-    if (operationId) {
-      IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 }).catch(() => {});
-    }
+    await persistIdempotencyResponse(operationId, responseData, 200);
 
     return res.status(200).json(responseData);
   } catch (error) {

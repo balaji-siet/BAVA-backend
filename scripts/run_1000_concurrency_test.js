@@ -309,7 +309,7 @@ async function runBenchmark() {
   console.log('Reason:');
   console.log('- Converted Student lookup in validateStudentDeviceBinding to .lean() to eliminate heavyweight document instantiation.');
   console.log('- Converted reservationDeviceLastUsedAt timestamp update to non-blocking background touch, eliminating a full synchronous write round-trip per request.');
-  console.log('- Converted IdempotencyKey.create to non-blocking background write after response assembly.');
+  console.log('- Persisted idempotency responses with an indexed upsert before acknowledged success to prevent retry-after-response-loss races.');
   console.log('- Replaced deprecated new:true with returnDocument:"after" in findOneAndUpdate.');
   console.log('- Removed synchronous stdout console.log calls from the high-frequency reservation write path.');
   console.log('Security weakened: NO');

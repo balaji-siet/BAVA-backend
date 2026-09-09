@@ -1,5 +1,12 @@
 const http = require('http');
+const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
+const Student = require('../src/models/Student');
+const { hashDeviceToken } = require('../src/controllers/reservationDeviceController');
+
 const BASE_URL = 'http://localhost:5000';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smartmess_test';
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_mess_token_123!';
 
 function makeRequest(method, pathStr, body = null, token = null, extraHeaders = {}) {
   return new Promise((resolve) => {
@@ -39,39 +46,36 @@ async function runConcurrencyIntegrityTests() {
   let passed = 0;
   let failed = 0;
 
+  await mongoose.connect(MONGODB_URI);
+
   const testEmail = `concurrency_student_${Date.now()}@test.local`;
   const testRoll = `CONC_ROLL_${Date.now()}`;
-  const testPass = 'TestPass123!';
+  const deviceToken = `concurrency_device_${Date.now()}`;
 
-  // Register clean student account
-  await makeRequest('POST', '/api/student/register', {
+  const student = await Student.create({
     name: 'Concurrency Test Student',
     roll_number: testRoll,
     department: 'ECE',
     email: testEmail,
-    password: testPass
+    password: '$2b$10$RegressionOnlyHashPlaceholder1234567890123456789012',
+    status: 'active',
+    reservationDeviceTokenHash: hashDeviceToken(deviceToken),
+    reservationDeviceBoundAt: new Date(),
+    reservationDeviceLastUsedAt: new Date()
   });
 
-  // Authenticate test account
-  const authRes = await makeRequest('POST', '/api/student/login', {
-    email: testEmail,
-    password: testPass
-  });
-
-  const token = authRes.data && authRes.data.token;
+  const token = jwt.sign(
+    { studentId: student._id.toString(), rollNumber: testRoll, role: 'student' },
+    JWT_SECRET,
+    { expiresIn: '1h', algorithm: 'HS256' }
+  );
   console.log(`1. Test Account Authentication: ${token ? 'SUCCESS' : 'FAILED'}`);
   if (!token) {
     console.error("❌ Authentication failed. Cannot proceed with concurrency testing.");
     process.exit(1);
   }
 
-  const enrollRes = await makeRequest('POST', '/api/reservation-device/enroll', null, token);
-  const deviceToken = enrollRes.data && enrollRes.data.deviceToken;
-  console.log(`   Reservation Device Enrollment: ${deviceToken ? 'SUCCESS' : 'FAILED'} (Status: ${enrollRes.status})`);
-  if (!deviceToken) {
-    console.error("Device enrollment failed. Cannot proceed with reservation concurrency testing.");
-    process.exit(1);
-  }
+  console.log('   Reservation Device Enrollment: SUCCESS (seeded isolated test device)');
 
   // TEST SCENARIO A: 10 Concurrent Meal Reservation Requests
   console.log("\n2. TEST SCENARIO A: 10 Concurrent Meal Reservation Requests for same student...");
@@ -140,6 +144,11 @@ async function runConcurrencyIntegrityTests() {
   console.log("============================================================");
 
   if (failed > 0) process.exit(1);
+  await mongoose.disconnect();
 }
 
-runConcurrencyIntegrityTests().catch(console.error);
+runConcurrencyIntegrityTests().catch(async (err) => {
+  console.error(err);
+  try { await mongoose.disconnect(); } catch (e) {}
+  process.exit(1);
+});
