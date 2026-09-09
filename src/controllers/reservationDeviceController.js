@@ -87,7 +87,7 @@ const validateStudentDeviceBinding = async (req, res) => {
     return false;
   }
 
-  const student = await Student.findById(req.userId).select('+reservationDeviceTokenHash');
+  const student = await Student.findById(req.userId).select('+reservationDeviceTokenHash').lean();
   if (!student) {
     res.status(404).json({ code: 'STUDENT_NOT_FOUND', error: 'Student account not found.' });
     return false;
@@ -106,7 +106,8 @@ const validateStudentDeviceBinding = async (req, res) => {
     return false;
   }
 
-  await Student.updateOne({ _id: req.userId }, { $set: { reservationDeviceLastUsedAt: new Date() } });
+  // Non-blocking background touch of lastUsedAt
+  Student.updateOne({ _id: req.userId }, { $set: { reservationDeviceLastUsedAt: new Date() } }).catch(() => {});
   return true;
 };
 

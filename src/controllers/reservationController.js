@@ -91,7 +91,7 @@ const saveReservations = async (req, res) => {
     const reservationDoc = await Reservation.findOneAndUpdate(
       { roll_number: rollNumber, reservation_date: date },
       { $set: updateFields },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
     );
 
     invalidateSettingsCache();
@@ -99,15 +99,10 @@ const saveReservations = async (req, res) => {
     const responseData = { message: 'Reservations saved successfully', reservation: reservationDoc };
 
     if (operationId) {
-      try {
-        await IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 });
-      } catch (idemSaveErr) {
-        // Ignore duplicate key if concurrently stored
-      }
+      IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 }).catch(() => {});
     }
 
-    res.status(200).json(responseData);
-    console.log(`[Reservation] Saved atomically for roll: ${rollNumber}, date: ${date}`);
+    return res.status(200).json(responseData);
   } catch (error) {
     console.error("Reservation Error Details:", error);
     res.status(500).json({ error: 'Database error saving reservation' });
@@ -164,7 +159,7 @@ const cancelReservation = async (req, res) => {
     const reservationDoc = await Reservation.findOneAndUpdate(
       { roll_number: rollNumber, reservation_date: date },
       { $set: updateFields },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     invalidateSettingsCache();
@@ -172,12 +167,10 @@ const cancelReservation = async (req, res) => {
     const responseData = { message: 'Reservations cancelled successfully', reservation: reservationDoc };
 
     if (operationId) {
-      try {
-        await IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 });
-      } catch (idemSaveErr) {}
+      IdempotencyKey.create({ key: operationId, response: responseData, statusCode: 200 }).catch(() => {});
     }
 
-    res.status(200).json(responseData);
+    return res.status(200).json(responseData);
   } catch (error) {
     console.error('Cancel reservations error:', error);
     res.status(500).json({ error: 'Database connection failed' });
