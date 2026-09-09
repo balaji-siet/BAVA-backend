@@ -133,6 +133,29 @@ router.post('/reserve-meal', verifyToken, reservationController.saveReservations
 router.post('/cancel-reservation', verifyToken, reservationController.cancelReservation);
 router.get('/reservations/today', verifyToken, reservationController.getReservationsByDate);
 
+// Live per-meal reservation counts (Supervisor Dashboard)
+router.get('/reservations/counts', verifyToken, async (req, res) => {
+  try {
+    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const [breakfast, lunch, dinner] = await Promise.all([
+      Reservation.countDocuments({ reservation_date: date, breakfast: true }),
+      Reservation.countDocuments({ reservation_date: date, lunch: true }),
+      Reservation.countDocuments({ reservation_date: date, dinner: true })
+    ]);
+    res.status(200).json({
+      date,
+      breakfast,
+      lunch,
+      dinner,
+      total: breakfast + lunch + dinner
+    });
+  } catch (err) {
+    console.error('[reservations/counts] error:', err);
+    res.status(500).json({ error: 'Failed to fetch reservation counts' });
+  }
+});
+
+
 // --- DYNAMIC MEAL SETTINGS & SMS MODULE ---
 router.get('/meal-settings/today', verifyToken, mealSettingsController.getTodaySettings);
 router.get('/meal-settings/:date', verifyToken, mealSettingsController.getSettingsByDate);

@@ -33,7 +33,7 @@ const getTodaySettings = async (req, res) => {
     const todayStr = getTodayDateString();
     const now = Date.now();
 
-    if (cachedTodaySettingsData && cachedTodaySettingsData.date === todayStr && (now - cachedTodaySettingsTime < 10000)) {
+    if (cachedTodaySettingsData && cachedTodaySettingsData.date === todayStr && (now - cachedTodaySettingsTime < 2000)) {
       return res.status(200).json({
         settings: cachedTodaySettingsData.settings,
         reservationCounts: cachedTodaySettingsData.reservationCounts,
@@ -312,5 +312,6 @@ module.exports = {
   copyTodayToTomorrow,
   resetToDefault,
   checkCutoffsAndSendSMS,
-  getSMSLogs
+  getSMSLogs,
+  invalidateSettingsCache
 };

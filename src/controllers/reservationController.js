@@ -1,6 +1,7 @@
 const Reservation = require('../models/Reservation');
 const Student = require('../models/Student');
 const { validateStudentDeviceBinding, validateStudentMealPasswordIfProvided } = require('./reservationDeviceController');
+const { invalidateSettingsCache } = require('./mealSettingsController');
 
 // Helper to get time
 function getCurrentTime() {
@@ -85,6 +86,7 @@ const saveReservations = async (req, res) => {
     if (meal_type === 'dinner') reservationDoc.dinner = true;
 
     await reservationDoc.save();
+    invalidateSettingsCache();
 
     res.status(200).json({ message: 'Reservations saved successfully', reservation: reservationDoc });
     console.log("Reservation Saved");
@@ -144,6 +146,7 @@ const cancelReservation = async (req, res) => {
         if (meal_type === 'dinner') reservationDoc.dinner = false;
       }
       await reservationDoc.save();
+      invalidateSettingsCache();
     }
 
     res.status(200).json({ message: 'Reservations cancelled successfully' });
