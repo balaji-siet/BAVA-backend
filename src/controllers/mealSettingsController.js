@@ -3,6 +3,7 @@ const Reservation = require('../models/Reservation');
 const SMSLog = require('../models/SMSLog');
 const { sendCutoffSMS } = require('../services/smsService');
 const { getIndiaDateString, getIndiaTomorrowDateString } = require('../utils/dateUtils');
+const { getBusinessNow, getMealWindowSnapshot } = require('../utils/reservationWindow');
 
 const DEFAULT_TIMINGS = {
   breakfast: { open_time: '06:00', close_time: '09:30', enabled: true, sms_sent: false },
@@ -26,6 +27,19 @@ function invalidateSettingsCache() {
   cachedTodaySettingsTime = 0;
 }
 
+const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function validateMealWindow(meal, window) {
+  if (!window) return null;
+  if (window.open_time !== undefined && !TIME_RE.test(window.open_time)) {
+    return `${meal} opening time must use HH:mm format.`;
+  }
+  if (window.close_time !== undefined && !TIME_RE.test(window.close_time)) {
+    return `${meal} cutoff time must use HH:mm format.`;
+  }
+  return null;
+}
+
 // GET /api/meal-settings/today
 const getTodaySettings = async (req, res) => {
   try {
@@ -36,6 +50,7 @@ const getTodaySettings = async (req, res) => {
       return res.status(200).json({
         settings: cachedTodaySettingsData.settings,
         reservationCounts: cachedTodaySettingsData.reservationCounts,
+        windowDetails: cachedTodaySettingsData.windowDetails,
         currentTime: new Date().toLocaleTimeString('en-US', { hour12: false })
       });
     }
@@ -56,12 +71,15 @@ const getTodaySettings = async (req, res) => {
     // Get live reservation counts for today via indexed countDocuments
     const counts = await getReservationCountsForDate(todayStr);
 
-    cachedTodaySettingsData = { date: todayStr, settings, reservationCounts: counts };
+    const windowDetails = getMealWindowSnapshot(settings, todayStr, getBusinessNow());
+
+    cachedTodaySettingsData = { date: todayStr, settings, reservationCounts: counts, windowDetails };
     cachedTodaySettingsTime = Date.now();
 
     res.status(200).json({
       settings,
       reservationCounts: counts,
+      windowDetails,
       currentTime: new Date().toLocaleTimeString('en-US', { hour12: false })
     });
   } catch (err) {
@@ -88,10 +106,12 @@ const getSettingsByDate = async (req, res) => {
     }
 
     const counts = await getReservationCountsForDate(dateStr);
+    const windowDetails = getMealWindowSnapshot(settings, dateStr, getBusinessNow());
 
     res.status(200).json({
       settings,
-      reservationCounts: counts
+      reservationCounts: counts,
+      windowDetails
     });
   } catch (err) {
     console.error('Error fetching date settings:', err);
@@ -104,6 +124,12 @@ const saveSettings = async (req, res) => {
   try {
     const { date, breakfast, lunch, dinner } = req.body;
     const targetDate = date || getTodayDateString();
+    for (const [meal, window] of Object.entries({ breakfast, lunch, dinner })) {
+      const error = validateMealWindow(meal, window);
+      if (error) {
+        return res.status(400).json({ code: 'INVALID_SCHEDULE', error });
+      }
+    }
 
     let settingsDoc = await MealSettings.findOne({ date: targetDate });
 

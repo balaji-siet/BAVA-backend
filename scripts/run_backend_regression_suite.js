@@ -80,6 +80,7 @@ function runScript(scriptRelativePath) {
     await runScript('scripts/reservation_password_fallback_regression_test.js');
     await runScript('scripts/full_functional_reservation_count_regression.js');
     await runScript('scripts/idempotency_failure_injection_regression.js');
+    await runScript('scripts/reservation_timing_cutoff_regression.js');
 
     console.log('\n============================================================');
     console.log('✅ ALL BACKEND REGRESSION SUITES COMPLETED SUCCESSFULLY!');

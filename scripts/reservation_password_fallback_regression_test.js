@@ -1,5 +1,34 @@
 const http = require('http');
+const mongoose = require('mongoose');
+const MealSettings = require('../src/models/MealSettings');
+
 const BASE_URL = 'http://localhost:5000';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smartmess_test';
+
+function assertLocalTestDb() {
+  const parsed = new URL(MONGODB_URI);
+  const dbName = parsed.pathname.replace('/', '');
+  if (!['127.0.0.1', 'localhost'].includes(parsed.hostname) || dbName !== 'smartmess_test') {
+    throw new Error('Refusing to seed schedules outside isolated smartmess_test database.');
+  }
+}
+
+async function seedOpenSchedules(dates) {
+  for (const date of dates) {
+    await MealSettings.findOneAndUpdate(
+      { date },
+      {
+        $set: {
+          breakfast: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+          lunch: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+          dinner: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+          updatedBy: 'Regression'
+        }
+      },
+      { upsert: true }
+    );
+  }
+}
 
 function makeRequest(method, pathStr, body = null, token = null, extraHeaders = {}) {
   return new Promise((resolve) => {
@@ -67,6 +96,10 @@ function pass(label, detail = '') {
     }
   };
 
+  assertLocalTestDb();
+  await mongoose.connect(MONGODB_URI);
+  await seedOpenSchedules(['2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05', '2026-09-06']);
+
   const student = await registerAndLogin('meal_password');
   const enroll = await makeRequest('POST', '/api/reservation-device/enroll', null, student.token);
   const deviceToken = enroll.data && enroll.data.deviceToken;
@@ -119,8 +152,9 @@ function pass(label, detail = '') {
   console.log('============================================================');
   console.log(`HYBRID MEAL PASSWORD FALLBACK SUMMARY: ${passed} PASSED | ${failed} FAILED`);
   console.log('============================================================');
+  await mongoose.disconnect();
   if (failed > 0) process.exit(1);
 })().catch((err) => {
   console.error('Hybrid meal password fallback regression failed:', err.message);
-  process.exit(1);
+  mongoose.disconnect().finally(() => process.exit(1));
 });

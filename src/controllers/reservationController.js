@@ -4,39 +4,18 @@ const IdempotencyKey = require('../models/IdempotencyKey');
 const { validateStudentDeviceBinding, validateStudentMealPasswordIfProvided } = require('./reservationDeviceController');
 const { getIndiaDateString, getIndiaTomorrowDateString } = require('../utils/dateUtils');
 const { invalidateSettingsCache } = require('./mealSettingsController');
+const { getBusinessNow, getMealWindowSnapshot, getReservationWindowStatus, MEALS } = require('../utils/reservationWindow');
 
 // Helper to get time
 function getCurrentTime() {
-  const now = new Date();
-  const offsetHrs = parseInt(process.env.DEBUG_TIME_OFFSET_HRS || '0', 10);
-  if (offsetHrs !== 0) {
-    now.setHours(now.getHours() + offsetHrs);
-  }
-  return now;
+  return getBusinessNow();
 }
 
 // Check deadline constraints
-function isWindowOpen(mealType, dateStr, bypass = false) {
+async function isWindowOpen(mealType, dateStr, bypass = false) {
   if (bypass) return true;
-
-  const now = getCurrentTime();
-  const parts = dateStr.split('-');
-  const mealDate = new Date(parts[0], parts[1] - 1, parts[2]);
-  const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  
-  const diffTime = mealDate.getTime() - nowDate.getTime();
-  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-  const currentHour = now.getHours();
-
-  if (mealType === 'breakfast') {
-    return diffDays === 1 && currentHour >= 18 && currentHour < 22;
-  } else if (mealType === 'lunch') {
-    return diffDays === 0 && currentHour >= 6 && currentHour < 10;
-  } else if (mealType === 'dinner') {
-    return diffDays === 0 && currentHour >= 12 && currentHour < 16;
-  }
-
-  return false;
+  const status = await getReservationWindowStatus(mealType, dateStr);
+  return status.allowed;
 }
 
 async function persistIdempotencyResponse(operationId, response, statusCode = 200) {
@@ -54,6 +33,47 @@ async function persistIdempotencyResponse(operationId, response, statusCode = 20
     }
     throw err;
   }
+}
+
+function getRequestedMeals(body) {
+  const requested = new Set();
+  if (body.meal_type) requested.add(body.meal_type);
+  for (const meal of MEALS) {
+    if (body[meal] === true) requested.add(meal);
+  }
+  return [...requested].filter(meal => MEALS.includes(meal));
+}
+
+async function enforceReservationWindows(req, res, date) {
+  if (req.query && (req.query.bypass === 'true' || req.query.bypass === true)) {
+    return true;
+  }
+  const requestedMeals = getRequestedMeals(req.body);
+  if (requestedMeals.length === 0) {
+    res.status(400).json({ code: 'NO_MEAL_SELECTED', error: 'Select at least one meal to reserve.' });
+    return false;
+  }
+
+  for (const meal of requestedMeals) {
+    const status = await getReservationWindowStatus(meal, date);
+    if (!status.allowed) {
+      res.status(403).json({
+        code: status.code,
+        error: status.message,
+        meal,
+        date,
+        window: {
+          openDate: status.openDate || null,
+          closeDate: status.closeDate || null,
+          openTime: status.settings?.[meal]?.open_time || null,
+          closeTime: status.settings?.[meal]?.close_time || null,
+          boundary: 'cutoff_inclusive'
+        }
+      });
+      return false;
+    }
+  }
+  return true;
 }
 
 // Create or update meal reservations atomically with idempotency support
@@ -85,6 +105,8 @@ const saveReservations = async (req, res) => {
     if (!deviceOk) return;
     const passwordOk = await validateStudentMealPasswordIfProvided(req, res);
     if (!passwordOk) return;
+    const windowOk = await enforceReservationWindows(req, res, date);
+    if (!windowOk) return;
 
     let rollNumber = req.userRoll || req.body.roll_number;
     if (!rollNumber && studentId) {
@@ -216,16 +238,25 @@ const getReservationsByDate = async (req, res) => {
       dinner: reservationDoc ? reservationDoc.dinner : false
     };
 
+    const MealSettings = require('../models/MealSettings');
+    const settings = await MealSettings.findOne({ date }).lean();
+    const windowDetails = settings ? getMealWindowSnapshot(settings, date, getCurrentTime()) : {
+      breakfast: { open: false, status: 'UNAVAILABLE', code: 'SCHEDULE_NOT_AVAILABLE' },
+      lunch: { open: false, status: 'UNAVAILABLE', code: 'SCHEDULE_NOT_AVAILABLE' },
+      dinner: { open: false, status: 'UNAVAILABLE', code: 'SCHEDULE_NOT_AVAILABLE' }
+    };
     const windows = {
-      breakfast: isWindowOpen('breakfast', date, req.query.bypass === 'true'),
-      lunch: isWindowOpen('lunch', date, req.query.bypass === 'true'),
-      dinner: isWindowOpen('dinner', date, req.query.bypass === 'true')
+      breakfast: windowDetails.breakfast.open,
+      lunch: windowDetails.lunch.open,
+      dinner: windowDetails.dinner.open
     };
 
     res.status(200).json({
       date,
       reservations,
       windows,
+      windowDetails,
+      settings,
       hasReserved: Boolean(reservationDoc),
       serverTime: getCurrentTime().toISOString()
     });
@@ -261,7 +292,7 @@ const getReservationsHistory = async (req, res) => {
   }
 };
 
-const getDebugInfo = (req, res) => {
+const getDebugInfo = async (req, res) => {
   const now = getCurrentTime();
   const dateStr = now.toISOString().split('T')[0];
   
@@ -275,12 +306,12 @@ const getDebugInfo = (req, res) => {
     offsetHours: parseInt(process.env.DEBUG_TIME_OFFSET_HRS || '0', 10),
     windowsToday: {
       date: dateStr,
-      lunch: isWindowOpen('lunch', dateStr),
-      dinner: isWindowOpen('dinner', dateStr)
+      lunch: await isWindowOpen('lunch', dateStr),
+      dinner: await isWindowOpen('dinner', dateStr)
     },
     windowsTomorrow: {
       date: tomorrowStr,
-      breakfast: isWindowOpen('breakfast', tomorrowStr)
+      breakfast: await isWindowOpen('breakfast', tomorrowStr)
     }
   });
 };
@@ -290,5 +321,6 @@ module.exports = {
   getReservationsByDate,
   getReservationsHistory,
   getDebugInfo,
-  cancelReservation
+  cancelReservation,
+  isWindowOpen
 };

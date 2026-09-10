@@ -4,6 +4,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const Student = require('../src/models/Student');
 const Reservation = require('../src/models/Reservation');
 const IdempotencyKey = require('../src/models/IdempotencyKey');
+const MealSettings = require('../src/models/MealSettings');
 const { hashDeviceToken } = require('../src/controllers/reservationDeviceController');
 const { saveReservations, cancelReservation, getReservationsByDate } = require('../src/controllers/reservationController');
 
@@ -64,6 +65,7 @@ async function runBenchmark() {
   await Student.syncIndexes();
   await Reservation.syncIndexes();
   await IdempotencyKey.syncIndexes();
+  await MealSettings.syncIndexes();
 
   // Create 1000 test students
   const studentDocs = [];
@@ -87,13 +89,29 @@ async function runBenchmark() {
   }
   const createdStudents = await Student.insertMany(studentDocs);
 
+  async function seedOpenSchedule(date) {
+    await MealSettings.findOneAndUpdate(
+      { date },
+      {
+        $set: {
+          breakfast: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+          lunch: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+          dinner: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+          updatedBy: 'Load Test'
+        }
+      },
+      { upsert: true }
+    );
+  }
+
   // Multi-stage runs (10, 50, 100, 250, 500, 1000)
   const stageResults = {};
   const stages = [10, 50, 100, 250, 500, 1000];
 
   for (const count of stages) {
     const stageStudents = createdStudents.slice(0, count);
-    const stageDate = `2026-09-STAGE-${count}`;
+    const stageDate = `2026-10-${String(stages.indexOf(count) + 1).padStart(2, '0')}`;
+    await seedOpenSchedule(stageDate);
     const latencies = [];
     const t0 = Date.now();
 
@@ -154,6 +172,7 @@ async function runBenchmark() {
 
   // 1000 Main Run on canonical date
   const MAIN_DATE = '2026-09-15';
+  await seedOpenSchedule(MAIN_DATE);
   const mainLatencies = [];
   const mainStart = Date.now();
   const mainPromises = createdStudents.map(std => {

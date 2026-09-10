@@ -4,11 +4,20 @@ const jwt = require('jsonwebtoken');
 const Reservation = require('../src/models/Reservation');
 const IdempotencyKey = require('../src/models/IdempotencyKey');
 const Student = require('../src/models/Student');
+const MealSettings = require('../src/models/MealSettings');
 const { hashDeviceToken } = require('../src/controllers/reservationDeviceController');
 
 const BASE_URL = 'http://localhost:5000';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smartmess_test';
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_mess_token_123!';
+
+function assertLocalTestDb() {
+  const parsed = new URL(MONGODB_URI);
+  const dbName = parsed.pathname.replace('/', '');
+  if (!['127.0.0.1', 'localhost'].includes(parsed.hostname) || dbName !== 'smartmess_test') {
+    throw new Error('Refusing to seed schedules outside isolated smartmess_test database.');
+  }
+}
 
 function makeRequest(method, pathStr, body = null, token = null, extraHeaders = {}) {
   return new Promise((resolve) => {
@@ -63,6 +72,21 @@ async function registerAndBindStudent() {
   return { token, roll, headers: { 'X-SmartMess-Device-Token': deviceToken } };
 }
 
+async function seedOpenSchedule(date) {
+  await MealSettings.findOneAndUpdate(
+    { date },
+    {
+      $set: {
+        breakfast: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        lunch: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        dinner: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        updatedBy: 'Regression'
+      }
+    },
+    { upsert: true }
+  );
+}
+
 async function getCounts(date, token) {
   const res = await makeRequest('GET', `/api/reservations/counts?date=${encodeURIComponent(date)}`, null, token);
   if (res.status !== 200) throw new Error(`count query failed: ${res.status}`);
@@ -74,6 +98,7 @@ async function getCounts(date, token) {
   console.log('SMART MESS — IDEMPOTENCY FAILURE INJECTION REGRESSION');
   console.log('============================================================');
 
+  assertLocalTestDb();
   await mongoose.connect(MONGODB_URI);
 
   let passed = 0;
@@ -90,6 +115,7 @@ async function getCounts(date, token) {
 
   const student = await registerAndBindStudent();
   const date = `2026-11-${String(Math.floor(Math.random() * 20) + 1).padStart(2, '0')}`;
+  await seedOpenSchedule(date);
   const reserveOperationId = `reserve_loss_${student.roll}`;
   const cancelOperationId = `cancel_loss_${student.roll}`;
   const headers = { ...student.headers, 'X-Operation-Id': reserveOperationId };

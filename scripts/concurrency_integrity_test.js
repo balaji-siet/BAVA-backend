@@ -2,11 +2,20 @@ const http = require('http');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const Student = require('../src/models/Student');
+const MealSettings = require('../src/models/MealSettings');
 const { hashDeviceToken } = require('../src/controllers/reservationDeviceController');
 
 const BASE_URL = 'http://localhost:5000';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smartmess_test';
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_mess_token_123!';
+
+function assertLocalTestDb() {
+  const parsed = new URL(MONGODB_URI);
+  const dbName = parsed.pathname.replace('/', '');
+  if (!['127.0.0.1', 'localhost'].includes(parsed.hostname) || dbName !== 'smartmess_test') {
+    throw new Error('Refusing to seed schedules outside isolated smartmess_test database.');
+  }
+}
 
 function makeRequest(method, pathStr, body = null, token = null, extraHeaders = {}) {
   return new Promise((resolve) => {
@@ -46,6 +55,7 @@ async function runConcurrencyIntegrityTests() {
   let passed = 0;
   let failed = 0;
 
+  assertLocalTestDb();
   await mongoose.connect(MONGODB_URI);
 
   const testEmail = `concurrency_student_${Date.now()}@test.local`;
@@ -80,6 +90,18 @@ async function runConcurrencyIntegrityTests() {
   // TEST SCENARIO A: 10 Concurrent Meal Reservation Requests
   console.log("\n2. TEST SCENARIO A: 10 Concurrent Meal Reservation Requests for same student...");
   const dateStr = '2026-09-01';
+  await MealSettings.findOneAndUpdate(
+    { date: dateStr },
+    {
+      $set: {
+        breakfast: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        lunch: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        dinner: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        updatedBy: 'Regression'
+      }
+    },
+    { upsert: true }
+  );
   const deviceHeaders = { 'X-SmartMess-Device-Token': deviceToken };
   const resPromises = Array.from({ length: 10 }, (_, i) => {
     return makeRequest('POST', '/api/reservations/create', {

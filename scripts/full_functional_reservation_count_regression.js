@@ -1,5 +1,32 @@
 const http = require('http');
+const mongoose = require('mongoose');
+const MealSettings = require('../src/models/MealSettings');
+
 const BASE_URL = 'http://localhost:5000';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/smartmess_test';
+
+function assertLocalTestDb() {
+  const parsed = new URL(MONGODB_URI);
+  const dbName = parsed.pathname.replace('/', '');
+  if (!['127.0.0.1', 'localhost'].includes(parsed.hostname) || dbName !== 'smartmess_test') {
+    throw new Error('Refusing to seed schedules outside isolated smartmess_test database.');
+  }
+}
+
+async function seedOpenSchedule(date) {
+  await MealSettings.findOneAndUpdate(
+    { date },
+    {
+      $set: {
+        breakfast: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        lunch: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        dinner: { open_time: '00:00', close_time: '23:59', open_date: '2026-09-01', close_date: '2026-12-31', enabled: true, sms_sent: false },
+        updatedBy: 'Regression'
+      }
+    },
+    { upsert: true }
+  );
+}
 
 function makeRequest(method, pathStr, body = null, token = null, extraHeaders = {}) {
   return new Promise((resolve) => {
@@ -69,6 +96,8 @@ async function getStudentReservation(date, token) {
 
   let passed = 0;
   let failed = 0;
+  assertLocalTestDb();
+  await mongoose.connect(MONGODB_URI);
   const check = (condition, label, detail = '') => {
     if (condition) {
       console.log(`  [PASS] ${label}${detail ? ` (${detail})` : ''}`);
@@ -81,6 +110,7 @@ async function getStudentReservation(date, token) {
 
   for (const meal of ['breakfast', 'lunch', 'dinner']) {
     const date = `2026-10-${meal === 'breakfast' ? '11' : meal === 'lunch' ? '12' : '13'}`;
+    await seedOpenSchedule(date);
     const student = await registerAndBindStudent(meal);
     const before = await getCounts(date, student.token);
     check(before[meal] === 0, `${meal} starts from zero active reservations`, `count=${before[meal]}`);
@@ -109,8 +139,9 @@ async function getStudentReservation(date, token) {
   console.log('============================================================');
   console.log(`FULL FUNCTIONAL RESERVATION COUNT SUMMARY: ${passed} PASSED | ${failed} FAILED`);
   console.log('============================================================');
+  await mongoose.disconnect();
   if (failed > 0) process.exit(1);
 })().catch((err) => {
   console.error('Full functional reservation count regression failed:', err.message);
-  process.exit(1);
+  mongoose.disconnect().finally(() => process.exit(1));
 });
