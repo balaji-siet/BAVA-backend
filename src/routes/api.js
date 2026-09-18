@@ -120,6 +120,25 @@ router.post('/register', rateLimiter(10, 15 * 60 * 1000), (req, res, next) => {
 });
 router.post('/login', rateLimiter(15, 15 * 60 * 1000), authController.studentLogin);
 router.get('/me', verifyToken, authController.getMe);
+
+// --- PASSWORD MANAGEMENT MODULE ---
+router.post('/auth/change-password', rateLimiter(10, 15 * 60 * 1000), (req, res, next) => {
+  if (req.headers.authorization) {
+    return verifyToken(req, res, () => authController.changePassword(req, res));
+  }
+  return authController.changePassword(req, res);
+});
+router.post('/change-password', rateLimiter(10, 15 * 60 * 1000), (req, res, next) => {
+  if (req.headers.authorization) {
+    return verifyToken(req, res, () => authController.changePassword(req, res));
+  }
+  return authController.changePassword(req, res);
+});
+router.post('/auth/forgot-password', rateLimiter(10, 15 * 60 * 1000), authController.forgotPassword);
+router.post('/forgot-password', rateLimiter(10, 15 * 60 * 1000), authController.forgotPassword);
+router.post('/auth/reset-password', rateLimiter(10, 15 * 60 * 1000), authController.resetPassword);
+router.post('/reset-password', rateLimiter(10, 15 * 60 * 1000), authController.resetPassword);
+
 router.get('/reservation-device/status', verifyToken, reservationDeviceController.getDeviceStatus);
 router.post('/reservation-device/enroll', verifyToken, reservationDeviceController.enrollDevice);
 router.post('/students/:studentId/reservation-device/reset', verifyAdmin, reservationDeviceController.resetStudentDevice);
@@ -254,6 +273,7 @@ router.get('/menu', verifyToken, menuController.getTodayMenu);
 router.post('/feedback', verifyToken, feedbackController.submitFeedback);
 router.post('/feedback/submit', verifyToken, feedbackController.submitFeedback);
 router.get('/feedback', verifyAdmin, feedbackController.getAllFeedback);
+router.get('/feedback/summary', verifyToken, feedbackController.getFeedbackSummary);
 router.get('/ratings/today', verifyToken, feedbackController.getTodayRatings);
 
 // --- DEBUG & TIME SIMULATION HELPERS ---

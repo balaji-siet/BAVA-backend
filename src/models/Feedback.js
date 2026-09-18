@@ -7,6 +7,7 @@ const feedbackSchema = new mongoose.Schema({
   meal_type: { type: String, required: true },
   rating: { type: Number, required: true, min: 1, max: 5 },
   comments: { type: String, default: '' },
+  photo_url: { type: String, default: '' },
   date: { type: String, default: () => new Date().toISOString().split('T')[0] }
 }, {
   timestamps: true

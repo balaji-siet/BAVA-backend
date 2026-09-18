@@ -43,7 +43,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin || (origin && origin.match(/^https?:\/\/localhost(:\d+)?$/)) || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      if (!origin || (origin && origin.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(:\d+)?$/)) || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
         callback(null, true);
       } else {
         callback(new Error('CORS policy violation for WebSocket connection.'));
@@ -74,7 +74,7 @@ const corsOptions = {
       return callback(null, true);
     }
     // Allow all localhost origins (any port) for development
-    if (origin.match(/^https?:\/\/localhost(:\d+)?$/)) {
+    if (origin.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(:\d+)?$/)) {
       return callback(null, true);
     }
     // Allow configured origins
@@ -88,13 +88,23 @@ const corsOptions = {
     callback(new Error('CORS policy: Access denied for this origin.'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Bypass-Tunnel-Reminder', 'x-bypass-windows'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Bypass-Tunnel-Reminder',
+    'X-SmartMess-Device-Token',
+    'X-SmartMess-Meal-Password',
+    'X-Operation-Id'
+  ],
   credentials: true
 };
 
+const path = require('path');
+
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 const mongoose = require('mongoose');
 
@@ -144,7 +154,13 @@ app.use('/api', apiRouter);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled server error:', err.stack);
+  console.error('Unhandled server error:', err.stack || err);
+  if (err.type === 'entity.too.large' || err.status === 413 || err.statusCode === 413) {
+    return res.status(413).json({ error: 'Photo is too large. Please choose an image under 5 MB.' });
+  }
+  if (err.status || err.statusCode) {
+    return res.status(err.status || err.statusCode).json({ error: err.message || 'Request failed' });
+  }
   res.status(500).json({ error: 'Internal Server Error' });
 });
 

@@ -290,10 +290,189 @@ const getMe = async (req, res) => {
   }
 };
 
+// Change Password
+const changePassword = async (req, res) => {
+  const userId = req.userId;
+  const { current_password, new_password, confirm_password, identifier } = req.body;
+
+  if (!current_password || !new_password) {
+    return res.status(400).json({ error: 'Current password and new password are required.' });
+  }
+
+  if (new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  if (confirm_password && new_password !== confirm_password) {
+    return res.status(400).json({ error: 'New password and confirmation do not match.' });
+  }
+
+  try {
+    let user = null;
+    let isStudent = false;
+
+    if (userId) {
+      user = await Student.findById(userId);
+      if (user) {
+        isStudent = true;
+      } else {
+        user = await Supervisor.findById(userId);
+      }
+    } else if (identifier) {
+      // Unauthenticated change password with identifier + current password verification
+      user = await Student.findOne({
+        $or: [{ email: identifier }, { roll_number: identifier }]
+      });
+      if (user) {
+        isStudent = true;
+      } else {
+        user = await Supervisor.findOne({
+          $or: [{ email: identifier }, { supervisor_id: identifier }]
+        });
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    let isMatch = false;
+    try {
+      isMatch = await bcrypt.compare(current_password, user.password);
+    } catch (e) {
+      isMatch = false;
+    }
+
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(new_password, salt);
+
+    user.password = passwordHash;
+    await user.save();
+
+    console.log(`Password changed successfully for ${isStudent ? 'student' : 'supervisor'}: ${user.email || user.roll_number}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully. Please log in with your new password.'
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Database error during password change.' });
+  }
+};
+
+// Forgot Password Request
+const forgotPassword = async (req, res) => {
+  const { identifier } = req.body;
+  if (!identifier) {
+    return res.status(400).json({ error: 'Roll number or Email is required.' });
+  }
+
+  try {
+    const student = await Student.findOne({
+      $or: [{ email: identifier }, { roll_number: identifier }]
+    });
+
+    const user = student || await Supervisor.findOne({
+      $or: [{ email: identifier }, { supervisor_id: identifier }]
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'No account found matching this identifier.' });
+    }
+
+    // Check device binding if device token is passed
+    const clientDeviceToken = req.headers['x-smartmess-device-token'] || req.body.device_token;
+    if (student && student.registered_device_token && clientDeviceToken && clientDeviceToken !== student.registered_device_token) {
+      return res.status(403).json({
+        error: 'Unregistered device. Please contact your Supervisor to reset device binding.',
+        code: 'DEVICE_UNREGISTERED'
+      });
+    }
+
+    // Issue short-lived password reset token (15 mins)
+    const resetToken = jwt.sign(
+      {
+        userId: user._id,
+        identifier: user.roll_number || user.supervisor_id,
+        purpose: 'password_reset'
+      },
+      JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Reset authorization granted.',
+      reset_token: resetToken
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Database error processing password recovery.' });
+  }
+};
+
+// Reset Password with Token
+const resetPassword = async (req, res) => {
+  const { reset_token, new_password, confirm_password } = req.body;
+
+  if (!reset_token || !new_password) {
+    return res.status(400).json({ error: 'Reset token and new password are required.' });
+  }
+
+  if (new_password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  if (confirm_password && new_password !== confirm_password) {
+    return res.status(400).json({ error: 'New password and confirmation do not match.' });
+  }
+
+  try {
+    const decoded = jwt.verify(reset_token, JWT_SECRET);
+    if (!decoded || decoded.purpose !== 'password_reset') {
+      return res.status(400).json({ error: 'Invalid or expired password reset token.' });
+    }
+
+    let user = await Student.findById(decoded.userId);
+    if (!user) {
+      user = await Supervisor.findById(decoded.userId);
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(new_password, salt);
+
+    user.password = passwordHash;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successfully. You may now log in with your new password.'
+    });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(400).json({ error: 'Password reset session expired. Please try again.' });
+    }
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Database error resetting password.' });
+  }
+};
+
 module.exports = {
   studentRegister,
   supervisorRegister,
   studentLogin,
   supervisorLogin,
-  getMe
+  getMe,
+  changePassword,
+  forgotPassword,
+  resetPassword
 };
