@@ -13,4 +13,8 @@ const feedbackSchema = new mongoose.Schema({
   timestamps: true
 });
 
+feedbackSchema.index({ student_id: 1, date: 1 });
+feedbackSchema.index({ createdAt: -1 });
+feedbackSchema.index({ date: 1, meal_type: 1 });
+
 module.exports = mongoose.model('Feedback', feedbackSchema);

@@ -70,7 +70,8 @@ const getAllFeedback = async (req, res) => {
     const feedbackList = await Feedback.find()
       .sort({ createdAt: -1 })
       .limit(100)
-      .populate('student_id', 'name roll_number hostel_block department');
+      .populate('student_id', 'name roll_number hostel_block department')
+      .lean();
 
     const formatted = feedbackList.map(f => {
       const std = f.student_id || {};
@@ -137,7 +138,7 @@ const getTodayRatings = async (req, res) => {
       filter.student_id = studentId;
     }
 
-    const ratings = await Feedback.find(filter).sort({ createdAt: -1 });
+    const ratings = await Feedback.find(filter).sort({ createdAt: -1 }).lean();
     res.status(200).json(ratings);
   } catch (error) {
     console.error('Get today ratings error:', error);
