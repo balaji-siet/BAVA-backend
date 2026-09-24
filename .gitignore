@@ -19,4 +19,10 @@ scripts/*_results.json
 scripts/*_summary.json
 scripts/*_report.json
 scripts/realistic_load_test_*.json
-
+uploads/*
+!uploads/.gitkeep
+uploads/feedback/*
+.env*
+!.env.example
+*.keystore
+*.jks

@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const PushToken = require('../models/PushToken');
+const notificationService = require('../services/notificationService');
 
 const notificationSchema = new mongoose.Schema({
   title: { type: String, required: true },
@@ -56,7 +58,92 @@ const getNotifications = async (req, res) => {
   }
 };
 
+// POST /api/notifications/register-push-token
+// Authenticated via verifyToken; strictly validates that caller has supervisor role
+const registerPushToken = async (req, res) => {
+  const { pushToken, platform, deviceId } = req.body;
+
+  if (!pushToken || typeof pushToken !== 'string') {
+    return res.status(400).json({ error: 'Valid pushToken string is required.' });
+  }
+
+  // Role comes strictly from the verified JWT, never trusted from body
+  const callerRole = req.userRole || 'student';
+  const callerId = req.userId || req.userRoll || 'unknown';
+
+  try {
+    const updated = await PushToken.findOneAndUpdate(
+      { pushToken },
+      {
+        userId: callerId,
+        role: callerRole,
+        platform: platform || 'android',
+        deviceId: deviceId || '',
+        enabled: true,
+        updatedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Push token registered successfully.',
+      role: callerRole,
+      enabled: updated.enabled
+    });
+  } catch (error) {
+    console.error('Register push token error:', error);
+    res.status(500).json({ error: 'Failed to register push token.' });
+  }
+};
+
+// POST /api/notifications/unregister-push-token
+const unregisterPushToken = async (req, res) => {
+  const { pushToken } = req.body;
+
+  if (!pushToken) {
+    return res.status(400).json({ error: 'pushToken is required.' });
+  }
+
+  try {
+    await PushToken.updateOne({ pushToken }, { enabled: false });
+    res.status(200).json({ success: true, message: 'Push token disabled.' });
+  } catch (error) {
+    console.error('Unregister push token error:', error);
+    res.status(500).json({ error: 'Failed to unregister push token.' });
+  }
+};
+
+// POST /api/notifications/test-supervisor-demand
+// Requires verifyAdmin
+const triggerTestSupervisorDemand = async (req, res) => {
+  const { mealType, targetDate, kind } = req.body;
+
+  const mType = (mealType || 'lunch').toLowerCase();
+  const tDate = targetDate || notificationService.getSimulatedDateStr();
+
+  try {
+    const result = await notificationService.dispatchDemandNotification(
+      mType,
+      tDate,
+      kind || 'TEST'
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Test supervisor demand notification dispatched.',
+      result
+    });
+  } catch (error) {
+    console.error('Trigger test demand error:', error);
+    res.status(500).json({ error: error.message || 'Failed to dispatch test notification.' });
+  }
+};
+
 module.exports = {
   createNotification,
-  getNotifications
+  getNotifications,
+  registerPushToken,
+  unregisterPushToken,
+  triggerTestSupervisorDemand
 };

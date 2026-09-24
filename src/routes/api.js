@@ -257,6 +257,9 @@ router.get('/reports', verifyAdmin, reportController.getDailyReport);
 // --- NOTIFICATION MODULE ---
 router.post('/notifications/create', verifyAdmin, notificationController.createNotification);
 router.get('/notifications', verifyToken, notificationController.getNotifications);
+router.post('/notifications/register-push-token', verifyToken, notificationController.registerPushToken);
+router.post('/notifications/unregister-push-token', verifyToken, notificationController.unregisterPushToken);
+router.post('/notifications/test-supervisor-demand', verifyAdmin, notificationController.triggerTestSupervisorDemand);
 
 // --- MENU MANAGEMENT MODULE ---
 router.get('/menu/today', verifyToken, menuController.getTodayMenu);
