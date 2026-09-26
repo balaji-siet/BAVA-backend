@@ -239,12 +239,16 @@ const getReservationsByDate = async (req, res) => {
     };
 
     const MealSettings = require('../models/MealSettings');
-    const settings = await MealSettings.findOne({ date }).lean();
-    const windowDetails = settings ? getMealWindowSnapshot(settings, date, getCurrentTime()) : {
-      breakfast: { open: false, status: 'UNAVAILABLE', code: 'SCHEDULE_NOT_AVAILABLE' },
-      lunch: { open: false, status: 'UNAVAILABLE', code: 'SCHEDULE_NOT_AVAILABLE' },
-      dinner: { open: false, status: 'UNAVAILABLE', code: 'SCHEDULE_NOT_AVAILABLE' }
-    };
+    const { DEFAULT_TIMINGS } = require('../utils/reservationWindow');
+    let settings = await MealSettings.findOne({ date }).lean();
+    if (!settings) {
+      settings = {
+        date,
+        ...DEFAULT_TIMINGS,
+        updatedBy: 'System Default'
+      };
+    }
+    const windowDetails = getMealWindowSnapshot(settings, date, getCurrentTime());
     const windows = {
       breakfast: windowDetails.breakfast.open,
       lunch: windowDetails.lunch.open,

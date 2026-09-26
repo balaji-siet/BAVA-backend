@@ -149,6 +149,7 @@ router.get('/reservations/history', verifyToken, reservationController.getReserv
 
 // Reservation Aliases for client compatibility
 router.post('/reservations', verifyToken, reservationController.saveReservations);
+router.post('/reservations/today', verifyToken, reservationController.saveReservations);
 router.post('/reserve-meal', verifyToken, reservationController.saveReservations);
 router.post('/cancel-reservation', verifyToken, reservationController.cancelReservation);
 router.get('/reservations/today', verifyToken, reservationController.getReservationsByDate);
