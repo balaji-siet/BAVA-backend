@@ -82,9 +82,10 @@ const validateStudentDeviceBinding = async (req, res) => {
   if (!requireStudent(req, res)) return false;
 
   const receivedToken = req.headers[DEVICE_TOKEN_HEADER];
+  // Normal meal reservation is account-authenticated (JWT).
+  // Registered reservation device is optional and NOT required for normal meal reservation.
   if (!receivedToken || typeof receivedToken !== 'string') {
-    res.status(403).json({ code: 'DEVICE_BINDING_REQUIRED', error: 'Registered reservation device is required.' });
-    return false;
+    return true;
   }
 
   const student = await Student.findById(req.userId).select('+reservationDeviceTokenHash').lean();
@@ -94,7 +95,7 @@ const validateStudentDeviceBinding = async (req, res) => {
   }
 
   if (!student.reservationDeviceTokenHash) {
-    res.status(403).json({ code: 'DEVICE_BINDING_REQUIRED', error: 'No reservation device is registered for this account.' });
+    res.status(403).json({ code: 'DEVICE_BINDING_INVALID', error: 'Reservation device token is invalid.' });
     return false;
   }
 

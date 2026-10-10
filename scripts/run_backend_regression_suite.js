@@ -81,6 +81,7 @@ function runScript(scriptRelativePath) {
     await runScript('scripts/full_functional_reservation_count_regression.js');
     await runScript('scripts/idempotency_failure_injection_regression.js');
     await runScript('scripts/reservation_timing_cutoff_regression.js');
+    await runScript('scripts/device_free_reservation_and_supervisor_counts_test.js');
 
     console.log('\n============================================================');
     console.log('✅ ALL BACKEND REGRESSION SUITES COMPLETED SUCCESSFULLY!');

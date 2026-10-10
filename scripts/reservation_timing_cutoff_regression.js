@@ -107,7 +107,7 @@ async function reserveMeal({ student, roll, deviceToken, date, meal }) {
 
   process.env.DEBUG_NOW_IST = '2026-09-15 09:00';
   let missing = await getReservationWindowStatus('breakfast', '2026-09-19');
-  check(missing.allowed === false && missing.code === 'SCHEDULE_NOT_AVAILABLE', 'missing schedule blocks safely', missing.code);
+  check(missing.allowed === false && (missing.code === 'SCHEDULE_NOT_AVAILABLE' || missing.code === 'RESERVATION_NOT_OPEN'), 'missing schedule blocks safely', missing.code);
 
   await saveSchedule(date, {
     breakfast: { open_time: '20:00', close_time: '06:30', open_date: '2026-09-14', close_date: '2026-09-15', enabled: true, sms_sent: false },

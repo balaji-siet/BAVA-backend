@@ -216,7 +216,12 @@ const getTodayNfcAttendance = async (req, res) => {
 
   try {
     const studentsCount = await Student.countDocuments({ status: 'active' });
-    const reservedCount = await Reservation.countDocuments({ reservation_date: today });
+    const [reservedCount, bCount, lCount, dCount] = await Promise.all([
+      Reservation.countDocuments({ reservation_date: today }),
+      Reservation.countDocuments({ reservation_date: today, breakfast: true }),
+      Reservation.countDocuments({ reservation_date: today, lunch: true }),
+      Reservation.countDocuments({ reservation_date: today, dinner: true })
+    ]);
     const attendedCount = await Attendance.countDocuments({ attendance_date: today, attendance_status: 'present' });
     const notAttendedCount = Math.max(0, reservedCount - attendedCount);
     const attendancePercentage = reservedCount > 0 ? Math.round((attendedCount / reservedCount) * 100) : 0;
@@ -226,7 +231,10 @@ const getTodayNfcAttendance = async (req, res) => {
       total_reserved: reservedCount,
       actual_attendance: attendedCount,
       not_attended: notAttendedCount,
-      attendance_percentage: attendancePercentage
+      attendance_percentage: attendancePercentage,
+      breakfast_count: bCount,
+      lunch_count: lCount,
+      dinner_count: dCount
     });
   } catch (error) {
     console.error('Fetch today dashboard stats error:', error);

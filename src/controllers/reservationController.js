@@ -37,9 +37,9 @@ async function persistIdempotencyResponse(operationId, response, statusCode = 20
 
 function getRequestedMeals(body) {
   const requested = new Set();
-  if (body.meal_type) requested.add(body.meal_type);
+  if (body.meal_type) requested.add(String(body.meal_type).toLowerCase().trim());
   for (const meal of MEALS) {
-    if (body[meal] === true) requested.add(meal);
+    if (body[meal] === true || body[meal] === 'true' || body[meal] === 1) requested.add(meal);
   }
   return [...requested].filter(meal => MEALS.includes(meal));
 }
@@ -50,6 +50,9 @@ async function enforceReservationWindows(req, res, date) {
   }
   const requestedMeals = getRequestedMeals(req.body);
   if (requestedMeals.length === 0) {
+    if (req.body.breakfast === false && req.body.lunch === false && req.body.dinner === false) {
+      return true;
+    }
     res.status(400).json({ code: 'NO_MEAL_SELECTED', error: 'Select at least one meal to reserve.' });
     return false;
   }
@@ -122,9 +125,10 @@ const saveReservations = async (req, res) => {
     if (breakfast !== undefined) updateFields.breakfast = Boolean(breakfast);
     if (lunch !== undefined) updateFields.lunch = Boolean(lunch);
     if (dinner !== undefined) updateFields.dinner = Boolean(dinner);
-    if (meal_type === 'breakfast') updateFields.breakfast = true;
-    if (meal_type === 'lunch') updateFields.lunch = true;
-    if (meal_type === 'dinner') updateFields.dinner = true;
+    const normMeal = meal_type ? String(meal_type).toLowerCase().trim() : null;
+    if (normMeal === 'breakfast') updateFields.breakfast = true;
+    if (normMeal === 'lunch') updateFields.lunch = true;
+    if (normMeal === 'dinner') updateFields.dinner = true;
 
     // Atomic findOneAndUpdate with upsert
     const reservationDoc = await Reservation.findOneAndUpdate(
@@ -182,15 +186,16 @@ const cancelReservation = async (req, res) => {
     }
     rollNumber = rollNumber || 'UNKNOWN';
 
+    const normMeal = meal_type ? String(meal_type).toLowerCase().trim() : null;
     const updateFields = {};
-    if (!meal_type) {
+    if (!normMeal) {
       updateFields.breakfast = false;
       updateFields.lunch = false;
       updateFields.dinner = false;
     } else {
-      if (meal_type === 'breakfast') updateFields.breakfast = false;
-      if (meal_type === 'lunch') updateFields.lunch = false;
-      if (meal_type === 'dinner') updateFields.dinner = false;
+      if (normMeal === 'breakfast') updateFields.breakfast = false;
+      if (normMeal === 'lunch') updateFields.lunch = false;
+      if (normMeal === 'dinner') updateFields.dinner = false;
     }
 
     const reservationDoc = await Reservation.findOneAndUpdate(

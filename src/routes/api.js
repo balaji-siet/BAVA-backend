@@ -157,7 +157,8 @@ router.get('/reservations/today', verifyToken, reservationController.getReservat
 // Live per-meal reservation counts (Supervisor Dashboard)
 router.get('/reservations/counts', verifyToken, async (req, res) => {
   try {
-    const date = req.query.date || getIndiaDateString();
+    const rawDate = req.query.date;
+    const date = (rawDate ? String(rawDate).trim() : null) || getIndiaDateString();
     const [breakfast, lunch, dinner] = await Promise.all([
       Reservation.countDocuments({ reservation_date: date, breakfast: true }),
       Reservation.countDocuments({ reservation_date: date, lunch: true }),
@@ -168,6 +169,9 @@ router.get('/reservations/counts', verifyToken, async (req, res) => {
       breakfast,
       lunch,
       dinner,
+      breakfast_count: breakfast,
+      lunch_count: lunch,
+      dinner_count: dinner,
       total: breakfast + lunch + dinner
     });
   } catch (err) {
